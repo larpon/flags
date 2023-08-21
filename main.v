@@ -183,7 +183,7 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			next = n
 		}
 		for field_real_name, field in struct_fields {
-			if _ := identified_fields[field.name] {
+			if _ := identified_fields[field_real_name] {
 				// println(id_flag)
 				continue
 			}
