@@ -1,53 +1,29 @@
-module main
-
-import os
-
-fn main() {
-	dump(args_to_struct[Config](os.args,
-		validate: {
-			'cmd':    fn (flag Flag) ! {
-				if flag.name !in ['foo', 'bar', 'lol'] {
-					return error('${flag.name} can only be one of foo, bar or lol')
-				}
-				if flag.pos != 1 {
-					return error('${flag.name} is expected to be at position 1, not ${flag.pos}')
-				}
-			}
-			'amount': fn (flag Flag) ! {
-				if arg := flag.arg {
-					if !(arg.int() >= 1 && arg.int() <= 3) {
-						return error('${flag.name} has to be between 1 and 3')
-					}
-				}
-			}
-		}
-	)!)
-}
+module args_to_struct
 
 struct Flag {
-	raw       string  [required]
-	delimiter string
-	name      string
-	arg       ?string
-	pos       int
-	repeats   int = 1
+	raw        string  [required]
+	field_name string  [required]
+	delimiter  string
+	name       string
+	arg        ?string
+	pos        int
+	repeats    int = 1
 }
 
 [params]
-struct ArgsToStructConfig {
-	validate        map[string]fn (Flag) !
+pub struct ArgsToStructConfig {
 	delimiter       string = '-'
 	style           Style  = .short_long
 	option_stop     string = '--'
-	error_reporting ErrorReporting = .relaxed
+	error_reporting ErrorReporting = .strict
 }
 
-enum ErrorReporting {
+pub enum ErrorReporting {
 	strict
 	relaxed
 }
 
-enum Style {
+pub enum Style {
 	short // Posix short only, allows mulitple shorts -def is `-d -e -f` and "sticky" arguments e.g.: `-ofoo` = `-o foo`
 	short_long // extends `posix` style shorts with GNU style long options: `--flag` or `--name=value`
 	long // GNU style long option *only*. E.g.: `--name` or `--name=value`
@@ -56,7 +32,8 @@ enum Style {
 }
 
 struct StructField {
-	name       string
+	match_name string
+	short_name string
 	is_bool    bool
 	is_multi   bool
 	short_only bool
@@ -64,46 +41,14 @@ struct StructField {
 	attrs      map[string]string
 }
 
-struct Config {
-	cmd           string   @[at: 1]
-	mix           bool
-	linker_option string   @[short_only: m]
-	mix_hard      bool     @[json: muh]
-	def_test      string   @[long: test; short: t] = 'def'
-	device        []string
-	paths         []string @[tail]
-	amount        int = 1
-	verbosity     int      @[repeats; short: v]
-	show_version  bool     @[long: version]
-	no_long_beef  bool     @[short_only: n]
-}
-
-fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
-	dump(input)
-	mut style := config.style
-	mut result := T{}
-	mut ignored := []string{}
-	mut left := input.clone()
-	mut flags := input.clone()
-
+fn generic_to_map[T]() !map[string]StructField {
 	mut struct_fields := map[string]StructField{}
-
-	mut handled_fields := []string{}
-	mut identified_fields := map[string]Flag{}
-	mut identified_multi_fields := map[string][]Flag{}
-	mut handled_pos := []int{}
-	handled_pos << 0 // skip exe entry
-
 	mut struct_name := ''
-	// First pass gathers information and sets positional `at: X` fields
 	$if T is $struct {
 		struct_name = T.name
-		$for attr in T.attributes {
-			println('${T.name} attribute ${attr}')
-		}
 		// Handle positional first so they can be marked as handled
 		$for field in T.fields {
-			mut field_name := field.name.replace('_', '-')
+			mut match_name := field.name.replace('_', '-')
 			println('looking at "${field.name}":')
 			mut attrs := map[string]string{}
 			for attr in field.attrs {
@@ -115,36 +60,23 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					attrs[attr.trim(' ')] = 'true'
 				}
 			}
-			if at_pos := attrs['at'] {
-				attr_value := at_pos.int()
-				if entry := input[attr_value] {
-					index := input.index(entry)
-					/*
-					if validator := config.validate[field.name] {
-							validator(Flag{
-								name: entry
-								pos: index
-							})!
-						}*/
-					$if field.typ is string {
-						result.$(field.name) = entry
-					}
-					println('Identified a match (at: ${attr_value}) for ${struct_name}.${field_name} = ${entry}')
-					handled_fields << field.name
-					handled_pos << index
-				}
-			}
 			if long_alias := attrs['long'] {
-				field_name = long_alias
+				match_name = long_alias
 			}
 			mut is_short_only := false
-			mut short_name := ''
-			if short_only := attrs['short_only'] {
-				is_short_only = true
-				if short_only == '' {
-					return error('attribute @[short_only] on ${struct_name}.${field_name} can not be empty, use @[short_only: x]')
+			if only := attrs['only'] {
+				if only.len == 0 {
+					return error('attribute @[only] on ${struct_name}.${match_name} can not be empty, use @[only: x]')
+				} else if only.len == 1 {
+					is_short_only = true
+					attrs['short'] = only
+				} else if only.len > 1 {
+					match_name = only
 				}
-				attrs['short'] = short_only
+			}
+			mut short_name := ''
+			if short_alias := attrs['short'] {
+				short_name = short_alias
 			}
 			can_repeat := if _ := attrs['repeats'] { true } else { false }
 
@@ -161,11 +93,12 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			// TODO
 
 			struct_fields[field.name] = StructField{
-				name: field_name
+				match_name: match_name
 				is_bool: is_bool
 				is_multi: is_multi
 				can_repeat: can_repeat
 				short_only: is_short_only
+				short_name: short_name
 				attrs: attrs
 			}
 		}
@@ -173,33 +106,79 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 		return error('The type `${T.name}` can not be decoded.')
 	}
 
-	println('second pass ${struct_name}')
-	dump(flags)
+	return struct_fields
+}
+
+fn (m map[string]Flag) query_flag_with_name(name string) ?Flag {
+	for _, flag in m {
+		if flag.name == name {
+			return flag
+		}
+	}
+	return none
+}
+
+pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
+	mut style := config.style
+	mut result := T{}
+	mut no_match := []string{}
+	mut flags := input.clone() // TODO
+
+	mut struct_fields := generic_to_map[T]()!
+
+	mut handled_fields := []string{}
+	mut identified_fields := map[string]Flag{}
+	mut identified_multi_fields := map[string][]Flag{}
+	mut handled_pos := []int{}
+	handled_pos << 0 // skip exe entry
+
+	mut struct_name := ''
+	// First pass gathers information and sets positional `at: X` fields
+	$if T is $struct {
+		struct_name = T.name
+		/*
+		$for attr in T.attributes {
+			println('${T.name} attribute ${attr}')
+		}
+		*/
+
+		// Handle positional first so they can be marked as handled
+		$for field in T.fields {
+			if at_pos := struct_fields[field.name].attrs['at'] {
+				attr_value := at_pos.int()
+				if entry := input[attr_value] {
+					index := input.index(entry)
+
+					$if field.typ is string {
+						result.$(field.name) = entry
+					}
+					println('Identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
+					handled_fields << field.name
+					handled_pos << index
+				}
+			}
+		}
+	} $else {
+		return error('The type `${T.name}` can not be decoded.')
+	}
+
 	//  mut skip_pos
 	delimiter := config.delimiter
 	for pos, flag in flags {
 		mut next := ''
-		if n := flags[pos + 1] {
-			next = n
+		if pos + 1 < flags.len {
+			next = flags[pos + 1]
 		}
-		for field_real_name, field in struct_fields {
-			if _ := identified_fields[field_real_name] {
+		for field_name, field in struct_fields {
+			if _ := identified_fields[field_name] {
 				// println(id_flag)
 				continue
 			}
-			if field_real_name !in handled_fields && pos !in handled_pos {
-				/*
-				for attr, val in field.attrs {
-					println('\tattribute: "${attr}:${val}"')
-					// if attr := field.s''.contains('short:') {
-					//	attr_value := attr.replace('short:', '').trim(' ')
-					//}
-				}
-				*/
-
+			if field_name !in handled_fields && pos !in handled_pos {
 				mut is_flag := false
 				mut is_option_stop := false // Single `--`
 				mut flag_name := ''
+				flag_short_name := field.short_name
 				if flag.starts_with(delimiter) {
 					is_flag = true
 					flag_name = flag.trim_left(delimiter)
@@ -217,15 +196,15 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					is_short_delimiter := used_delimiter.count(delimiter) == 1
 					is_invalid_delimiter := !is_long_delimiter && !is_short_delimiter
 
-					mut flag_short_name := ''
-					if short_attr := field.attrs['short'] {
-						flag_short_name = short_attr
-					}
 					println('looking at ${used_delimiter} ${if is_long_delimiter {
 						'long'
 					} else {
 						'short'
-					}} flag "${flag}/${flag_name}" is it matching "${field_real_name}/${flag_short_name}"?')
+					}} flag "${flag}/${flag_name}" is it matching "${field_name}${if flag_short_name != '' {
+						'/' + flag_short_name
+					} else {
+						''
+					}}"?')
 
 					if is_invalid_delimiter {
 						return error('invalid delimiter "${used_delimiter}" for flag "${flag}"')
@@ -238,7 +217,7 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 							return error('long delimiter for flag ${flag} in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
 						}
 						if field.short_only {
-							println('Skipping long delimiter match for ${struct_name}.${field_real_name} since it has [short_only: ${flag_short_name}]')
+							println('Skipping long delimiter match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
 						}
 					}
 
@@ -249,10 +228,11 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					}
 
 					if field.is_bool {
-						if flag_name == field.name {
-							println('Identified a match for (bool) ${struct_name}.${field_real_name} = ${flag}/${flag_name}/${flag_short_name}')
-							identified_fields[field_real_name] = Flag{
+						if flag_name == field.match_name {
+							println('Identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
+							identified_fields[field_name] = Flag{
 								raw: flag
+								field_name: field_name
 								delimiter: used_delimiter
 								name: flag_name
 								pos: pos
@@ -263,7 +243,11 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					}
 
 					first_letter := flag_name.split('')[0]
-					next_first_letter := next.split('')[0]
+					next_first_letter := if next != '' {
+						next.split('')[0]
+					} else {
+						''
+					}
 					count_of_first_letter_repeats := flag_name.count(first_letter)
 					count_of_next_first_letter_repeats := next.count(next_first_letter)
 					if is_short_delimiter {
@@ -272,9 +256,10 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 							if field.can_repeat {
 								mut do_continue := false
 								if count_of_first_letter_repeats == flag_name.len {
-									print('Identified a match for (repeatable) ${struct_name}.${field_real_name} = ${flag}/${flag_name}/${flag_short_name} ')
-									identified_fields[field_real_name] = Flag{
+									print('Identified a match for (repeatable) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
+									identified_fields[field_name] = Flag{
 										raw: flag
+										field_name: field_name
 										delimiter: used_delimiter
 										name: flag_name
 										pos: pos
@@ -285,11 +270,12 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 									if next_first_letter == first_letter
 										&& count_of_next_first_letter_repeats == next.len {
-										println('field "${field_real_name}" allow repeats and ${flag} ${next} repeats ${
+										println('field "${field_name}" allow repeats and ${flag} ${next} repeats ${
 											count_of_next_first_letter_repeats +
 											count_of_first_letter_repeats} times (via argument)')
-										identified_fields[field_real_name] = Flag{
+										identified_fields[field_name] = Flag{
 											raw: flag
+											field_name: field_name
 											delimiter: used_delimiter
 											name: flag_name
 											pos: pos
@@ -300,7 +286,7 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 										handled_pos << pos + 1 // next
 										do_continue = true
 									} else {
-										println('field "${field_real_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
+										println('field "${field_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
 									}
 									if do_continue {
 										continue
@@ -315,15 +301,18 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 						mut next_is_handled := true
 						if split != '' {
 							next = split
+							flag_name = flag_name.trim_string_right(split)
 							next_is_handled = false
 						}
 
 						if next == '' {
 							return error('flag "${flag}" expects an argument')
 						}
-						println('Identified a match for (short only) ${struct_name}.${field_real_name} (${field.name}) = ${flag_short_name} = ${next}')
-						identified_fields[field_real_name] = Flag{
+						println('Identified a match for (short only) ${struct_name}.${field_name} (${field.match_name}) = ${flag_short_name} = ${next}')
+
+						identified_fields[field_name] = Flag{
 							raw: flag
+							field_name: field_name
 							delimiter: used_delimiter
 							name: flag_name
 							arg: next
@@ -335,14 +324,15 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 							handled_pos << pos + 1 // next
 						}
 						continue
-					} else if flag_name == field.name && !(field.short_only
+					} else if flag_name == field.match_name && !(field.short_only
 						&& flag_name == flag_short_name) {
-						println('Identified a match for ${struct_name}.${field_real_name} = ${flag}/${flag_name}/${flag_short_name} ')
+						println('Identified a match for ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
 						if next == '' {
 							return error('flag "${flag}" expects an argument')
 						}
-						identified_fields[field_real_name] = Flag{
+						identified_fields[field_name] = Flag{
 							raw: flag
+							field_name: field_name
 							delimiter: used_delimiter
 							name: flag_name
 							arg: next
@@ -358,39 +348,43 @@ fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				} else if is_option_stop {
 					println('option stop "${flag_name}" at index "${pos}"')
 				} else {
-					// if flag !in ignored {
-					//	ignored << flag
+					// if flag !in no_match {
+					//	no_match << flag
 					//}
 					//
 					// return error('invalid flag "${flag}"')
-					// println('looking at non-flag "${flag}" "${field.name}":')
+					// println('looking at non-flag "${flag}" "${field.match_name}":')
 				}
-
-				/*
-				if validator := config.validate[field.name] {
-						validator(Flag{
-							name: field.name
-							pos: pos
-						})!
-					}*/
 			}
 		}
-		if pos !in handled_pos && flag !in ignored {
-			println('No match for ${flag} at index ${pos}')
-			if config.error_reporting == .strict {
-				return error('No match for ${flag} at index ${pos}')
+		if pos !in handled_pos && flag !in no_match {
+			no_match << flag
+			flag_name := flag.trim_left(delimiter)
+			if already_flag := identified_fields.query_flag_with_name(flag_name) {
+				return error('flag "${flag}" is already mapped to field "${already_flag.field_name}" ')
 			}
-			ignored << flag
+			// if config.error_reporting == .strict {
+			return error('No match for ${flag} at index ${pos}')
+			//}
 		}
 		// flags.delete(pos)
 	}
 
-	println('Could not parse ${ignored}')
+	println('Could not match ${no_match}')
+	$if T is $struct {
+		$for field in T.fields {
+			if f := identified_fields[field.name] {
+				$if field.typ is int {
+					result.$(field.name) = f.arg or { '${f.repeats}' }.int()
+				}
+			}
+		}
+	} $else {
+		return error('The type `${T.name}` can not be decoded.')
+	}
 
 	return result
 }
-
-fn value[T]() !T {}
 
 /*
 // is_position_validator := field.name.split('').all(it in ['0','1','2','3','4','5','6','7','8','9'])
