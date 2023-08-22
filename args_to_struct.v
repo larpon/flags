@@ -340,7 +340,9 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			no_match << flag
 			flag_name := flag.trim_left(delimiter)
 			if already_flag := identified_fields.query_flag_with_name(flag_name) {
-				return error('flag `${flag}` is already mapped to field `${already_flag.field_name}`')
+				return error('flag `${flag}` is already mapped to field `${already_flag.field_name}` via `${already_flag.delimiter}${already_flag.name} ${already_flag.arg or {
+					''
+				}}`')
 			}
 			// if config.error_reporting == .strict {
 			return error('no match for flag `${flag}` at index ${pos} in ${style} style parsing mode')

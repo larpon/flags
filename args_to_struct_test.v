@@ -61,7 +61,7 @@ fn test_args_to_struct() {
 	assert 'one' in config2.device
 	assert 'two' in config2.device
 	assert 'three' in config2.device
-  assert config2.device.len == 3
+	assert config2.device.len == 3
 	assert config2.linker_option == 'windows'
 
 	mut posix_and_gnu_args_plus_test := posix_and_gnu_args.clone()
@@ -77,7 +77,7 @@ fn test_args_to_struct() {
 	assert 'two' in config3.device
 	assert 'three' in config3.device
 	assert 'four' in config3.device
-  assert config3.device.len == 4
+	assert config3.device.len == 4
 	assert config3.linker_option == 'windows'
 }
 
@@ -93,7 +93,7 @@ fn test_args_to_struct_error_messages() {
 		assert err.msg() == 'long delimiter encountered in flag `--device=two` in short (POSIX) style parsing mode'
 	}
 
-  // Test double mapping of flags
+	// Test double mapping of flags
 	if _ := a2s.args_to_struct[Config](posix_args_error,
 		skip_first: true
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
@@ -101,9 +101,8 @@ fn test_args_to_struct_error_messages() {
 	{
 		assert false, 'args_to_struct should fail here'
 	} else {
-		assert err.msg() == 'flag `-m` is already mapped to field `linker_option`'
+		assert err.msg() == 'flag `-m` is already mapped to field `linker_option` via `-m windows`'
 	}
-
 
 	for e_num in all_style_enums {
 		// Test error for non-flag as first arg (usually the `/path/to/executable`) - which must be skipped with `.skip_first`
