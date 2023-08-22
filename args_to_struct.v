@@ -10,17 +10,35 @@ struct Flag {
 	repeats    int = 1
 }
 
+struct FlagContext {
+	raw         string [required]
+	delimiter   string
+	name        string
+	next        string
+	short_name  string
+	struct_name string
+	pos         int
+}
+
 [params]
 pub struct ArgsToStructConfig {
 	delimiter       string = '-'
 	style           Style  = .short_long
 	option_stop     string = '--'
 	error_reporting ErrorReporting = .strict
+	skip_first      bool
+	ignore          Ignore
 }
 
 pub enum ErrorReporting {
 	strict
 	relaxed
+}
+
+[flag]
+pub enum Ignore {
+	nothing
+	at_attr
 }
 
 pub enum Style {
@@ -32,13 +50,15 @@ pub enum Style {
 }
 
 struct StructField {
-	match_name string
-	short_name string
-	is_bool    bool
-	is_multi   bool
-	short_only bool
-	can_repeat bool
-	attrs      map[string]string
+	struct_name string
+	name        string
+	match_name  string
+	short_name  string
+	is_bool     bool
+	is_multi    bool
+	short_only  bool
+	can_repeat  bool
+	attrs       map[string]string
 }
 
 fn generic_to_map[T]() !map[string]StructField {
@@ -93,6 +113,8 @@ fn generic_to_map[T]() !map[string]StructField {
 			// TODO
 
 			struct_fields[field.name] = StructField{
+				name: field.name
+				struct_name: struct_name
 				match_name: match_name
 				is_bool: is_bool
 				is_multi: is_multi
@@ -130,7 +152,9 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	mut identified_fields := map[string]Flag{}
 	mut identified_multi_fields := map[string][]Flag{}
 	mut handled_pos := []int{}
-	handled_pos << 0 // skip exe entry
+	if config.skip_first {
+		handled_pos << 0 // skip exe entry
+	}
 
 	mut struct_name := ''
 	// First pass gathers information and sets positional `at: X` fields
@@ -144,17 +168,19 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 		// Handle positional first so they can be marked as handled
 		$for field in T.fields {
-			if at_pos := struct_fields[field.name].attrs['at'] {
-				attr_value := at_pos.int()
-				if entry := input[attr_value] {
-					index := input.index(entry)
+			if !config.ignore.has(.at_attr) {
+				if at_pos := struct_fields[field.name].attrs['at'] {
+					attr_value := at_pos.int()
+					if entry := input[attr_value] {
+						index := input.index(entry)
 
-					$if field.typ is string {
-						result.$(field.name) = entry
+						$if field.typ is string {
+							result.$(field.name) = entry
+						}
+						println('Identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
+						handled_fields << field.name
+						handled_pos << index
 					}
-					println('Identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
-					handled_fields << field.name
-					handled_pos << index
 				}
 			}
 		}
@@ -164,7 +190,20 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 	//  mut skip_pos
 	delimiter := config.delimiter
+	// Get the index of the last flag (used to find any trailing args)
+	index_of_last_flag := index_of_last(flags, delimiter)
 	for pos, flag in flags {
+		pos_is_handled := pos in handled_pos
+		if !pos_is_handled {
+			if pos == index_of_last_flag + 1 {
+				println('reached index of last flag (${flag}) at index ${pos}')
+				break
+			}
+			if flag == config.option_stop {
+				println('reached option stop (${config.option_stop}) at index ${pos}')
+				break
+			}
+		}
 		mut next := ''
 		if pos + 1 < flags.len {
 			next = flags[pos + 1]
@@ -174,7 +213,8 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				// println(id_flag)
 				continue
 			}
-			if field_name !in handled_fields && pos !in handled_pos {
+			field_is_handled := field_name in handled_fields
+			if !field_is_handled && !pos_is_handled {
 				mut is_flag := false
 				mut is_option_stop := false // Single `--`
 				mut flag_name := ''
@@ -182,6 +222,10 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				if flag.starts_with(delimiter) {
 					is_flag = true
 					flag_name = flag.trim_left(delimiter)
+					// Parse GNU `--name=value`
+					if style in [.long, .short_long] {
+						flag_name = flag_name.all_before('=')
+					}
 					if flag == config.option_stop {
 						is_flag = false
 						flag_name = flag
@@ -191,7 +235,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 				// A flag, parse it and find best matching field in struct
 				if is_flag {
-					used_delimiter := flag.trim_string_right(flag_name)
+					used_delimiter := flag.all_before(flag_name)
 					is_long_delimiter := used_delimiter.count(delimiter) == 2
 					is_short_delimiter := used_delimiter.count(delimiter) == 1
 					is_invalid_delimiter := !is_long_delimiter && !is_short_delimiter
@@ -207,14 +251,14 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					}}"?')
 
 					if is_invalid_delimiter {
-						return error('invalid delimiter "${used_delimiter}" for flag "${flag}"')
+						return error('invalid delimiter "${used_delimiter}" for flag `${flag}`')
 					}
 					if is_long_delimiter {
 						if style == .short {
-							return error('long delimiter encountered in flag ${flag} in ${style} (POSIX) style parsing mode')
+							return error('long delimiter encountered in flag `${flag}` in ${style} (POSIX) style parsing mode')
 						}
 						if !field.is_bool && style in [.long, .short_long] && !flag.contains('=') {
-							return error('long delimiter for flag ${flag} in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
+							return error('long delimiter for flag `${flag}` in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
 						}
 						if field.short_only {
 							println('Skipping long delimiter match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
@@ -223,7 +267,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 					if is_short_delimiter {
 						if style == .long {
-							return error('short delimiter encountered in flag ${flag} in ${style} (GNU) style parsing mode')
+							return error('short delimiter encountered in flag `${flag}` in ${style} (GNU) style parsing mode')
 						}
 					}
 
@@ -242,109 +286,44 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 						}
 					}
 
+					/*
 					first_letter := flag_name.split('')[0]
 					next_first_letter := if next != '' {
 						next.split('')[0]
 					} else {
 						''
 					}
-					count_of_first_letter_repeats := flag_name.count(first_letter)
-					count_of_next_first_letter_repeats := next.count(next_first_letter)
-					if is_short_delimiter {
-						if first_letter == flag_short_name {
-							// `-vvvvv`, `-vv vvv` or `-v vvvv`
-							if field.can_repeat {
-								mut do_continue := false
-								if count_of_first_letter_repeats == flag_name.len {
-									print('Identified a match for (repeatable) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
-									identified_fields[field_name] = Flag{
-										raw: flag
-										field_name: field_name
-										delimiter: used_delimiter
-										name: flag_name
-										pos: pos
-										repeats: count_of_first_letter_repeats
-									}
-									handled_pos << pos
-									do_continue = true
+					*/
 
-									if next_first_letter == first_letter
-										&& count_of_next_first_letter_repeats == next.len {
-										println('field "${field_name}" allow repeats and ${flag} ${next} repeats ${
-											count_of_next_first_letter_repeats +
-											count_of_first_letter_repeats} times (via argument)')
-										identified_fields[field_name] = Flag{
-											raw: flag
-											field_name: field_name
-											delimiter: used_delimiter
-											name: flag_name
-											pos: pos
-											repeats: count_of_next_first_letter_repeats +
-												count_of_first_letter_repeats
-										}
-										handled_pos << pos
-										handled_pos << pos + 1 // next
-										do_continue = true
-									} else {
-										println('field "${field_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
-									}
-									if do_continue {
-										continue
-									}
-								}
+					flag_context := FlagContext{
+						raw: flag
+						delimiter: used_delimiter
+						name: flag_name
+						next: next
+						short_name: flag_short_name
+						pos: pos
+					}
+
+					if is_short_delimiter {
+						if style in [.short, .short_long] {
+							if parse_posix_short(flag_context, field, mut identified_fields, mut
+								identified_multi_fields, mut handled_pos)!
+							{
+								continue
 							}
 						}
 					}
 
-					if is_short_delimiter && field.short_only && first_letter == flag_short_name {
-						split := flag_name.trim_string_left(flag_short_name)
-						mut next_is_handled := true
-						if split != '' {
-							next = split
-							flag_name = flag_name.trim_string_right(split)
-							next_is_handled = false
+					if is_long_delimiter {
+						// Parse GNU `--name=value`
+						if style in [.long, .short_long] {
+							parse_gnu_long(flag_context, field, mut identified_fields, mut
+								identified_multi_fields, mut handled_pos)!
+							{
+								continue
+							}
 						}
-
-						if next == '' {
-							return error('flag "${flag}" expects an argument')
-						}
-						println('Identified a match for (short only) ${struct_name}.${field_name} (${field.match_name}) = ${flag_short_name} = ${next}')
-
-						identified_fields[field_name] = Flag{
-							raw: flag
-							field_name: field_name
-							delimiter: used_delimiter
-							name: flag_name
-							arg: next
-							pos: pos
-							repeats: count_of_first_letter_repeats
-						}
-						handled_pos << pos
-						if next_is_handled {
-							handled_pos << pos + 1 // next
-						}
-						continue
-					} else if flag_name == field.match_name && !(field.short_only
-						&& flag_name == flag_short_name) {
-						println('Identified a match for ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
-						if next == '' {
-							return error('flag "${flag}" expects an argument')
-						}
-						identified_fields[field_name] = Flag{
-							raw: flag
-							field_name: field_name
-							delimiter: used_delimiter
-							name: flag_name
-							arg: next
-							pos: pos
-							repeats: count_of_first_letter_repeats
-						}
-						handled_pos << pos
-						handled_pos << pos + 1 // next
-						continue
 					}
-
-					// handled_pos << pos
 				} else if is_option_stop {
 					println('option stop "${flag_name}" at index "${pos}"')
 				} else {
@@ -361,21 +340,40 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			no_match << flag
 			flag_name := flag.trim_left(delimiter)
 			if already_flag := identified_fields.query_flag_with_name(flag_name) {
-				return error('flag "${flag}" is already mapped to field "${already_flag.field_name}" ')
+				return error('flag `${flag}` is already mapped to field `${already_flag.field_name}`')
 			}
 			// if config.error_reporting == .strict {
-			return error('No match for ${flag} at index ${pos}')
+			return error('no match for flag `${flag}` at index ${pos} in ${style} style parsing mode')
 			//}
 		}
 		// flags.delete(pos)
 	}
 
-	println('Could not match ${no_match}')
+	if no_match.len > 0 {
+		return error('could not match ${no_match}')
+	}
+
 	$if T is $struct {
 		$for field in T.fields {
 			if f := identified_fields[field.name] {
 				$if field.typ is int {
+					// println('assigning (int) ${field.name} = ${f}')
 					result.$(field.name) = f.arg or { '${f.repeats}' }.int()
+				} $else $if field.typ is string {
+					// println('assigning (string) ${field.name} = ${f}')
+					result.$(field.name) = f.arg or {
+						return error('failed appending ${f} to ${field.name}')
+					}
+						.str()
+				}
+			}
+			for f in identified_multi_fields[field.name] {
+				$if field.typ is []string {
+					// println('assigning ${field.name} << ${f}')
+					result.$(field.name) << f.arg or {
+						return error('failed appending ${f} to ${field.name}')
+					}
+						.str()
 				}
 			}
 		}
@@ -384,6 +382,182 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	}
 
 	return result
+}
+
+fn parse_gnu_long(flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
+	flag := flag_context.raw
+	mut flag_name := flag_context.name
+	flag_short_name := flag_context.short_name
+	pos := flag_context.pos
+	used_delimiter := flag_context.delimiter
+	// mut next := flag_context.next
+	struct_name := field.struct_name
+
+	field_name := field.name
+	if flag_name == field.match_name {
+		arg := flag.all_after('=')
+		if field.is_multi {
+			println('Identified a match for (GNU style multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
+			identified_multi_fields[field_name] << Flag{
+				raw: flag
+				field_name: field_name
+				delimiter: used_delimiter
+				name: flag_name
+				arg: arg
+				pos: pos
+			}
+		} else {
+			println('Identified a match for (GNU style) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
+			identified_fields[field_name] = Flag{
+				raw: flag
+				field_name: field_name
+				delimiter: used_delimiter
+				name: flag_name
+				arg: arg
+				pos: pos
+			}
+		}
+		handled_pos << pos
+		return true
+	}
+	return false
+}
+
+fn parse_posix_short(flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
+	flag := flag_context.raw
+	mut flag_name := flag_context.name
+	flag_short_name := flag_context.short_name
+	pos := flag_context.pos
+	used_delimiter := flag_context.delimiter
+	mut next := flag_context.next
+	struct_name := field.struct_name
+
+	field_name := field.name
+
+	first_letter := flag_name.split('')[0]
+	next_first_letter := if next != '' {
+		next.split('')[0]
+	} else {
+		''
+	}
+	count_of_first_letter_repeats := flag_name.count(first_letter)
+	count_of_next_first_letter_repeats := next.count(next_first_letter)
+
+	if first_letter == flag_short_name {
+		// `-vvvvv`, `-vv vvv` or `-v vvvv`
+		if field.can_repeat {
+			mut do_continue := false
+			if count_of_first_letter_repeats == flag_name.len {
+				print('Identified a match for (repeatable) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
+				identified_fields[field_name] = Flag{
+					raw: flag
+					field_name: field_name
+					delimiter: used_delimiter
+					name: flag_name
+					pos: pos
+					repeats: count_of_first_letter_repeats
+				}
+				handled_pos << pos
+				do_continue = true
+
+				if next_first_letter == first_letter
+					&& count_of_next_first_letter_repeats == next.len {
+					println('field "${field_name}" allow repeats and ${flag} ${next} repeats ${
+						count_of_next_first_letter_repeats + count_of_first_letter_repeats} times (via argument)')
+					identified_fields[field_name] = Flag{
+						raw: flag
+						field_name: field_name
+						delimiter: used_delimiter
+						name: flag_name
+						pos: pos
+						repeats: count_of_next_first_letter_repeats + count_of_first_letter_repeats
+					}
+					handled_pos << pos
+					handled_pos << pos + 1 // next
+					do_continue = true
+				} else {
+					println('field "${field_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
+				}
+				if do_continue {
+					return true
+				}
+			}
+		} else if field.is_multi {
+			split := flag_name.trim_string_left(flag_short_name)
+			mut next_is_handled := true
+			if split != '' {
+				next = split
+				flag_name = flag_name.trim_string_right(split)
+				next_is_handled = false
+			}
+
+			if next == '' {
+				return error('flag "${flag}" expects an argument')
+			}
+			println('Identified a match for (multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${next}')
+
+			identified_multi_fields[field_name] << Flag{
+				raw: flag
+				field_name: field_name
+				delimiter: used_delimiter
+				name: flag_name
+				arg: next
+				pos: pos
+			}
+			handled_pos << pos
+			if next_is_handled {
+				handled_pos << pos + 1 // next
+			}
+			return true
+		}
+	}
+	if field.short_only && first_letter == flag_short_name {
+		split := flag_name.trim_string_left(flag_short_name)
+		mut next_is_handled := true
+		if split != '' {
+			next = split
+			flag_name = flag_name.trim_string_right(split)
+			next_is_handled = false
+		}
+
+		if next == '' {
+			return error('flag "${flag}" expects an argument')
+		}
+		println('Identified a match for (short only) ${struct_name}.${field_name} (${field.match_name}) = ${flag_short_name} = ${next}')
+
+		identified_fields[field_name] = Flag{
+			raw: flag
+			field_name: field_name
+			delimiter: used_delimiter
+			name: flag_name
+			arg: next
+			pos: pos
+			repeats: count_of_first_letter_repeats
+		}
+		handled_pos << pos
+		if next_is_handled {
+			handled_pos << pos + 1 // next
+		}
+		return true
+	} else if flag_name == field.match_name && !(field.short_only && flag_name == flag_short_name) {
+		println('Identified a match for (repeats) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
+		if next == '' {
+			return error('flag "${flag}" expects an argument')
+		}
+		identified_fields[field_name] = Flag{
+			raw: flag
+			field_name: field_name
+			delimiter: used_delimiter
+			name: flag_name
+			arg: next
+			pos: pos
+			repeats: count_of_first_letter_repeats
+		}
+		handled_pos << pos
+		handled_pos << pos + 1 // next
+		return true
+	}
+	return false
 }
 
 /*
@@ -457,3 +631,13 @@ $if field.is_enum {
 					return error('The type of `${field.name}` is unknown')
 				}
 */
+
+fn index_of_last(array []string, find string) int {
+	for i := array.len - 1; i >= 0; i-- {
+		e := array[i]
+		if e.starts_with(find) {
+			return i
+		}
+	}
+	return -1
+}
