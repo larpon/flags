@@ -1,19 +1,24 @@
 import args_to_struct as a2s
 
 const (
-	all_style_enums                = [a2s.Style.short, .short_long, .long, .go_flag, .chaos]
-	posix_gnu_style_enums          = [a2s.Style.short, .short_long, .long]
-	mixed_args                     = ['/path/to/exe', 'subcmd', '-vv', 'vvv', '-version', '--mix',
-		'--mix-all=all', '-ldflags', '-m', '2', '-fgh', '["test", "test"]', '-m',
+	all_style_enums                          = [a2s.Style.short, .short_long, .long, .go_flag,
+		.chaos]
+	posix_gnu_style_enums                    = [a2s.Style.short, .short_long, .long]
+	mixed_args                               = ['/path/to/exe', 'subcmd', '-vv', 'vvv', '-version',
+		'--mix', '--mix-all=all', '-ldflags', '-m', '2', '-fgh', '["test", "test"]', '-m',
 		'{map: 2, ml-q:"hello"}']
 
-	posix_and_gnu_args             = ['-vv', 'vvv', '-mwindows', '-d', 'one', '--device=two',
-		'--amount=8', '-d', 'three']
+	posix_and_gnu_args                       = ['-vv', 'vvv', '-mwindows', '-d', 'one',
+		'--device=two', '--amount=8', '-d', 'three']
 
-	posix_and_gnu_args_with_subcmd = ['/path/to/exe', 'subcmd', '-vv', 'vvv', '-mwindows', '-d',
-		'one', '--device=two', '--amount=8', '-d', 'three']
+	posix_and_gnu_args_with_subcmd           = ['/path/to/exe', 'subcmd', '-vv', 'vvv', '-mwindows',
+		'-d', 'one', '--device=two', '--amount=8', '-d', 'three']
 
-	posix_args_error               = ['/path/to/exe', '-vv', 'vvv', '-mwindows', '-m', 'gnu']
+	posix_and_gnu_args_with_subcmd_and_paths = ['/path/to/exe', 'subcmd', '-vv', 'vvv', '-mwindows',
+		'-d', 'one', '--device=two', '--amount=8', '-d', 'three', '/path/to/a', '/path/to/b']
+
+	posix_args_error                         = ['/path/to/exe', '-vv', 'vvv', '-mwindows', '-m',
+		'gnu']
 )
 
 struct Config {
@@ -31,7 +36,7 @@ struct Config {
 }
 
 struct LongConfig {
-	mix          bool
+	mix          bool     @[short: m]
 	mix_hard     bool
 	def_test     string   @[long: test] = 'def'
 	paths        []string @[tail]
@@ -73,12 +78,26 @@ fn test_args_to_struct() {
 	assert config3.verbosity == 5
 	assert config3.amount == 8
 	assert config3.def_test == 'ok'
-	assert 'one' in config3.device
-	assert 'two' in config3.device
-	assert 'three' in config3.device
-	assert 'four' in config3.device
 	assert config3.device.len == 4
+	assert 'one' == config3.device[0]
+	assert 'two' == config3.device[1]
+	assert 'three' == config3.device[2]
+	assert 'four' == config3.device[3]
 	assert config3.linker_option == 'windows'
+
+	config4 := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd_and_paths, skip_first: true)!
+	assert config4.cmd == 'subcmd'
+	assert config4.verbosity == 5
+	assert config4.amount == 8
+	assert config4.def_test == 'def'
+	assert config4.device.len == 3
+	assert 'one' == config4.device[0]
+	assert 'two' == config4.device[1]
+	assert 'three' == config4.device[2]
+	assert config4.linker_option == 'windows'
+	assert config4.paths.len == 2
+	assert config4.paths[0] == '/path/to/a'
+	assert config4.paths[1] == '/path/to/b'
 }
 
 fn test_args_to_struct_error_messages() {
