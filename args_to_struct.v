@@ -56,6 +56,7 @@ struct StructField {
 	short_name  string
 	is_bool     bool
 	is_multi    bool
+	has_tail    bool
 	short_only  bool
 	can_repeat  bool
 	attrs       map[string]string
@@ -99,6 +100,7 @@ fn generic_to_map[T]() !map[string]StructField {
 				short_name = short_alias
 			}
 			can_repeat := if _ := attrs['repeats'] { true } else { false }
+			has_tail := if _ := attrs['tail'] { true } else { false }
 
 			mut is_bool := false
 			$if field.typ is bool {
@@ -118,6 +120,7 @@ fn generic_to_map[T]() !map[string]StructField {
 				match_name: match_name
 				is_bool: is_bool
 				is_multi: is_multi
+				has_tail: has_tail
 				can_repeat: can_repeat
 				short_only: is_short_only
 				short_name: short_name
@@ -191,11 +194,11 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	//  mut skip_pos
 	delimiter := config.delimiter
 	// Get the index of the last flag (used to find any trailing args)
-	index_of_last_flag := index_of_last(flags, delimiter)
+	index_of_last_flag := index_of_last(flags, delimiter) // TODO can probably be removed
 	for pos, flag in flags {
 		pos_is_handled := pos in handled_pos
 		if !pos_is_handled {
-			if pos == index_of_last_flag + 1 {
+			if pos == index_of_last_flag + 1 { // TODO can probably be removed
 				println('reached index of last flag (${flag}) at index ${pos}')
 				break
 			}
@@ -327,6 +330,29 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				} else if is_option_stop {
 					println('option stop "${flag_name}" at index "${pos}"')
 				} else {
+					if field.has_tail {
+						if last_handled_pos := handled_pos[handled_pos.len - 1] {
+							if pos == last_handled_pos + 1 {
+								if field.is_multi {
+									identified_multi_fields[field_name] << Flag{
+										raw: flag
+										field_name: field_name
+										arg: flag // .arg is used when assigning at comptime to []XYZ
+										pos: pos
+									}
+								} else {
+									identified_fields[field_name] = Flag{
+										raw: flag
+										field_name: field_name
+										arg: flag
+										pos: pos
+									}
+								}
+								handled_pos << pos
+								continue
+							}
+						}
+					}
 					// if flag !in no_match {
 					//	no_match << flag
 					//}
@@ -371,7 +397,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			}
 			for f in identified_multi_fields[field.name] {
 				$if field.typ is []string {
-					// println('assigning ${field.name} << ${f}')
+					println('assigning ${field.name} << ${f}')
 					result.$(field.name) << f.arg or {
 						return error('failed appending ${f} to ${field.name}')
 					}
@@ -634,6 +660,7 @@ $if field.is_enum {
 				}
 */
 
+// TODO can probably be removed
 fn index_of_last(array []string, find string) int {
 	for i := array.len - 1; i >= 0; i-- {
 		e := array[i]
