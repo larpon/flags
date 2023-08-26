@@ -156,7 +156,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	mut identified_multi_fields := map[string][]Flag{}
 	mut handled_pos := []int{}
 	if config.skip_first {
-		handled_pos << 0 // skip exe entry
+		handled_pos << 0 // skip first entry, aka. the "exe" or "executable"
 	}
 
 	mut struct_name := ''
