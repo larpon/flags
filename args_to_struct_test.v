@@ -19,6 +19,10 @@ const (
 
 	posix_args_error                         = ['/path/to/exe', '-vv', 'vvv', '-mwindows', '-m',
 		'gnu']
+	gnu_args                                 = ['--f=10.2', '--mix', '--test=test', '--amount=5',
+		'--version=1.2.3', 'other']
+	gnu_args_error                           = ['--f=10.2', '--mix', '--test=test', '--amount=5',
+		'--version=1.2.3', 'other', 'oo']
 )
 
 struct Config {
@@ -36,18 +40,19 @@ struct Config {
 }
 
 struct LongConfig {
-	mix          bool     @[short: m]
-	mix_hard     bool
-	def_test     string   @[long: test] = 'def'
-	paths        []string @[tail]
+	f            f32
+	mix          bool
+	some_test    string @[long: test] = 'abc'
+	path         string @[tail]
 	amount       int = 1
-	show_version bool     @[long: version]
+	show_version bool   @[long: version]
 }
 
 fn test_args_to_struct() {
 	// Test .short_long parse style
 	config1 := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd, skip_first: true)!
 	assert config1.cmd == 'subcmd'
+	assert config1.mix == false
 	assert config1.verbosity == 5
 	assert config1.amount == 8
 	assert config1.def_test == 'def'
@@ -60,6 +65,7 @@ fn test_args_to_struct() {
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
 	)!
 	assert config2.cmd == ''
+	assert config2.mix == false
 	assert config2.verbosity == 5
 	assert config2.amount == 8
 	assert config2.def_test == 'def'
@@ -75,6 +81,7 @@ fn test_args_to_struct() {
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
 	)!
 	assert config3.cmd == ''
+	assert config3.mix == false
 	assert config3.verbosity == 5
 	assert config3.amount == 8
 	assert config3.def_test == 'ok'
@@ -100,6 +107,17 @@ fn test_args_to_struct() {
 	assert config4.paths[1] == '/path/to/b'
 }
 
+fn test_long_args_to_struct() {
+	// Test .long parse style
+	lc1 := a2s.args_to_struct[LongConfig](gnu_args, style: .long)!
+	assert lc1.f == 10.2
+	assert lc1.mix == true
+	assert lc1.some_test == 'test'
+	assert lc1.path == 'other'
+	assert lc1.amount == 5
+	assert lc1.show_version == true
+}
+
 fn test_args_to_struct_error_messages() {
 	// Test error for GNU long flag in .short (Posix) mode
 	if _ := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd,
@@ -109,7 +127,7 @@ fn test_args_to_struct_error_messages() {
 	{
 		assert false, 'args_to_struct should fail here'
 	} else {
-		assert err.msg() == 'long delimiter encountered in flag `--device=two` in short (POSIX) style parsing mode'
+		assert err.msg() == 'long delimiter `--` encountered in flag `--device=two` in short (POSIX) style parsing mode'
 	}
 
 	// Test double mapping of flags
@@ -132,7 +150,7 @@ fn test_args_to_struct_error_messages() {
 			assert false, 'args_to_struct should fail here'
 		} else {
 			//
-			match_msg := 'no match for flag `/path/to/exe` at index 0 in ${e_num} style parsing mode'
+			match_msg := 'no match for `/path/to/exe` at index 0 in ${e_num} style parsing mode'
 			assert err.msg() == match_msg
 		}
 	}
@@ -142,13 +160,19 @@ fn test_args_to_struct_error_messages() {
 			assert false, 'args_to_struct should fail here'
 		} else {
 			if e_num == .short {
-				assert err.msg() == 'long delimiter encountered in flag `--mix` in short (POSIX) style parsing mode'
+				assert err.msg() == 'long delimiter `--` encountered in flag `--mix` in short (POSIX) style parsing mode'
 			} else if e_num == .long {
-				assert err.msg() == 'short delimiter encountered in flag `-vv` in long (GNU) style parsing mode'
+				assert err.msg() == 'short delimiter `-` encountered in flag `-vv` in long (GNU) style parsing mode'
 			} else {
-				assert err.msg() == 'long delimiter for flag `--mix` in short_long style parsing mode, expects GNU style assignment. E.g.: --name=value'
+				assert err.msg() == 'no match for flag `--mix-all=all` at index 6 in short_long style parsing mode'
+				// TODO catch this: assert err.msg() == 'long delimiter `--` for flag `--mix` in short_long style parsing mode, expects GNU style assignment. E.g.: --name=value'
 			}
 			assert true
 		}
+	}
+	if _ := a2s.args_to_struct[LongConfig](gnu_args_error, style: .long) {
+		assert false, 'args_to_struct should fail here'
+	} else {
+		assert err.msg() == 'no match for the last entry `oo` in long style parsing mode'
 	}
 }

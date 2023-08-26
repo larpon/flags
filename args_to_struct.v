@@ -196,12 +196,8 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	// Get the index of the last flag (used to find any trailing args)
 	index_of_last_flag := index_of_last(flags, delimiter) // TODO can probably be removed
 	for pos, flag in flags {
-		pos_is_handled := pos in handled_pos
+		mut pos_is_handled := pos in handled_pos
 		if !pos_is_handled {
-			if pos == index_of_last_flag + 1 { // TODO can probably be removed
-				println('reached index of last flag (${flag}) at index ${pos}')
-				break
-			}
 			if flag == config.option_stop {
 				println('reached option stop (${config.option_stop}) at index ${pos}')
 				break
@@ -217,149 +213,143 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				continue
 			}
 			field_is_handled := field_name in handled_fields
-			if !field_is_handled && !pos_is_handled {
-				mut is_flag := false
-				mut is_option_stop := false // Single `--`
-				mut flag_name := ''
-				flag_short_name := field.short_name
-				if flag.starts_with(delimiter) {
-					is_flag = true
-					flag_name = flag.trim_left(delimiter)
-					// Parse GNU `--name=value`
-					if style in [.long, .short_long] {
-						flag_name = flag_name.all_before('=')
+			pos_is_handled = pos in handled_pos
+			if field_is_handled || pos_is_handled {
+				continue
+			}
+			mut is_flag := false
+			mut is_option_stop := false // Single `--`
+			mut flag_name := ''
+			flag_short_name := field.short_name
+			if flag.starts_with(delimiter) {
+				is_flag = true
+				flag_name = flag.trim_left(delimiter)
+				// Parse GNU `--name=value`
+				if style in [.long, .short_long] {
+					flag_name = flag_name.all_before('=')
+				}
+				if flag == config.option_stop {
+					is_flag = false
+					flag_name = flag
+					is_option_stop = true
+				}
+			}
+
+			// A flag, parse it and find best matching field in struct
+			if is_flag {
+				used_delimiter := flag.all_before(flag_name)
+				is_long_delimiter := used_delimiter.count(delimiter) == 2
+				is_short_delimiter := used_delimiter.count(delimiter) == 1
+				is_invalid_delimiter := !is_long_delimiter && !is_short_delimiter
+
+				println('looking at ${used_delimiter} ${if is_long_delimiter {
+					'long'
+				} else {
+					'short'
+				}} flag "${flag}/${flag_name}" is it matching "${field_name}${if flag_short_name != '' {
+					'/' + flag_short_name
+				} else {
+					''
+				}}"?')
+
+				if is_invalid_delimiter {
+					return error('invalid delimiter "${used_delimiter}" for flag `${flag}`')
+				}
+				if is_long_delimiter {
+					if style == .short {
+						return error('long delimiter `${used_delimiter}` encountered in flag `${flag}` in ${style} (POSIX) style parsing mode')
 					}
-					if flag == config.option_stop {
-						is_flag = false
-						flag_name = flag
-						is_option_stop = true
+					if !field.is_bool && style in [.long, .short_long] && !flag.contains('=') {
+						return error('long delimiter `${used_delimiter}` for flag `${flag}` in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
+					}
+					if field.short_only {
+						println('Skipping long delimiter `${used_delimiter}` match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
 					}
 				}
 
-				// A flag, parse it and find best matching field in struct
-				if is_flag {
-					used_delimiter := flag.all_before(flag_name)
-					is_long_delimiter := used_delimiter.count(delimiter) == 2
-					is_short_delimiter := used_delimiter.count(delimiter) == 1
-					is_invalid_delimiter := !is_long_delimiter && !is_short_delimiter
-
-					println('looking at ${used_delimiter} ${if is_long_delimiter {
-						'long'
-					} else {
-						'short'
-					}} flag "${flag}/${flag_name}" is it matching "${field_name}${if flag_short_name != '' {
-						'/' + flag_short_name
-					} else {
-						''
-					}}"?')
-
-					if is_invalid_delimiter {
-						return error('invalid delimiter "${used_delimiter}" for flag `${flag}`')
+				if is_short_delimiter {
+					if style == .long {
+						return error('short delimiter `${used_delimiter}` encountered in flag `${flag}` in ${style} (GNU) style parsing mode')
 					}
-					if is_long_delimiter {
-						if style == .short {
-							return error('long delimiter encountered in flag `${flag}` in ${style} (POSIX) style parsing mode')
+				}
+
+				if field.is_bool {
+					if flag_name == field.match_name {
+						println('Identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
+						identified_fields[field_name] = Flag{
+							raw: flag
+							field_name: field_name
+							delimiter: used_delimiter
+							name: flag_name
+							pos: pos
 						}
-						if !field.is_bool && style in [.long, .short_long] && !flag.contains('=') {
-							return error('long delimiter for flag `${flag}` in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
-						}
-						if field.short_only {
-							println('Skipping long delimiter match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
+						handled_pos << pos
+						continue
+					}
+				}
+
+				flag_context := FlagContext{
+					raw: flag
+					delimiter: used_delimiter
+					name: flag_name
+					next: next
+					short_name: flag_short_name
+					pos: pos
+				}
+
+				if is_short_delimiter {
+					if style in [.short, .short_long] {
+						if parse_posix_short(flag_context, field, mut identified_fields, mut
+							identified_multi_fields, mut handled_pos)!
+						{
+							continue
 						}
 					}
+				}
 
-					if is_short_delimiter {
-						if style == .long {
-							return error('short delimiter encountered in flag `${flag}` in ${style} (GNU) style parsing mode')
+				if is_long_delimiter {
+					// Parse GNU `--name=value`
+					if style in [.long, .short_long] {
+						if parse_gnu_long(flag_context, field, mut identified_fields, mut
+							identified_multi_fields, mut handled_pos)!
+						{
+							continue
 						}
 					}
-
-					if field.is_bool {
-						if flag_name == field.match_name {
-							println('Identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
-							identified_fields[field_name] = Flag{
-								raw: flag
-								field_name: field_name
-								delimiter: used_delimiter
-								name: flag_name
-								pos: pos
+				}
+			} else if is_option_stop {
+				println('option stop "${flag_name}" at index "${pos}"')
+			} else {
+				if field.has_tail {
+					if last_handled_pos := handled_pos[handled_pos.len - 1] {
+						println('last_handled_pos: ${last_handled_pos}')
+						if pos == last_handled_pos + 1 {
+							if field.is_multi {
+								identified_multi_fields[field_name] << Flag{
+									raw: flag
+									field_name: field_name
+									arg: flag // .arg is used when assigning at comptime to []XYZ
+									pos: pos
+								}
+							} else {
+								identified_fields[field_name] = Flag{
+									raw: flag
+									field_name: field_name
+									arg: flag
+									pos: pos
+								}
 							}
 							handled_pos << pos
 							continue
 						}
 					}
-
-					/*
-					first_letter := flag_name.split('')[0]
-					next_first_letter := if next != '' {
-						next.split('')[0]
-					} else {
-						''
-					}
-					*/
-
-					flag_context := FlagContext{
-						raw: flag
-						delimiter: used_delimiter
-						name: flag_name
-						next: next
-						short_name: flag_short_name
-						pos: pos
-					}
-
-					if is_short_delimiter {
-						if style in [.short, .short_long] {
-							if parse_posix_short(flag_context, field, mut identified_fields, mut
-								identified_multi_fields, mut handled_pos)!
-							{
-								continue
-							}
-						}
-					}
-
-					if is_long_delimiter {
-						// Parse GNU `--name=value`
-						if style in [.long, .short_long] {
-							parse_gnu_long(flag_context, field, mut identified_fields, mut
-								identified_multi_fields, mut handled_pos)!
-							{
-								continue
-							}
-						}
-					}
-				} else if is_option_stop {
-					println('option stop "${flag_name}" at index "${pos}"')
-				} else {
-					if field.has_tail {
-						if last_handled_pos := handled_pos[handled_pos.len - 1] {
-							if pos == last_handled_pos + 1 {
-								if field.is_multi {
-									identified_multi_fields[field_name] << Flag{
-										raw: flag
-										field_name: field_name
-										arg: flag // .arg is used when assigning at comptime to []XYZ
-										pos: pos
-									}
-								} else {
-									identified_fields[field_name] = Flag{
-										raw: flag
-										field_name: field_name
-										arg: flag
-										pos: pos
-									}
-								}
-								handled_pos << pos
-								continue
-							}
-						}
-					}
-					// if flag !in no_match {
-					//	no_match << flag
-					//}
-					//
-					// return error('invalid flag "${flag}"')
-					// println('looking at non-flag "${flag}" "${field.match_name}":')
 				}
+				// if flag !in no_match {
+				//	no_match << flag
+				//}
+				//
+				// return error('invalid flag "${flag}"')
+				// println('looking at non-flag "${flag}" "${field.match_name}":')
 			}
 		}
 		if pos !in handled_pos && flag !in no_match {
@@ -369,6 +359,14 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				return error('flag `${flag}` is already mapped to field `${already_flag.field_name}` via `${already_flag.delimiter}${already_flag.name} ${already_flag.arg or {
 					''
 				}}`')
+			}
+			is_flag := flag.starts_with(delimiter)
+			if !is_flag {
+				if pos == input.len - 1 {
+					return error('no match for the last entry `${flag}` in ${style} style parsing mode')
+				} else {
+					return error('no match for `${flag}` at index ${pos} in ${style} style parsing mode')
+				}
 			}
 			// if config.error_reporting == .strict {
 			return error('no match for flag `${flag}` at index ${pos} in ${style} style parsing mode')
@@ -387,6 +385,13 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				$if field.typ is int {
 					// println('assigning (int) ${field.name} = ${f}')
 					result.$(field.name) = f.arg or { '${f.repeats}' }.int()
+				} $else $if field.typ is f32 {
+					result.$(field.name) = f.arg or {
+						return error('failed appending ${f} to ${field.name}')
+					}
+						.f32()
+				} $else $if field.typ is bool {
+					result.$(field.name) = true
 				} $else $if field.typ is string {
 					// println('assigning (string) ${field.name} = ${f}')
 					result.$(field.name) = f.arg or {
