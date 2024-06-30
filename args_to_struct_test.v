@@ -24,6 +24,7 @@ const (
 	gnu_args_error                           = ['--f=10.2', '--mix', '--test=test', '--amount=5',
 		'--version=1.2.3', 'other', 'oo']
 )
+const ignore_args_error = ['--show-version', '--some-test=ouch', '--amount=5', 'end']
 
 struct Config {
 	cmd           string   @[at: 1]
@@ -46,6 +47,13 @@ struct LongConfig {
 	path         string @[tail]
 	amount       int = 1
 	show_version bool   @[long: version]
+}
+
+struct IgnoreConfig {
+	some_test    string = 'abc' @[ignore]
+	path         string @[tail]
+	amount       int = 1
+	show_version bool
 }
 
 fn test_args_to_struct() {
@@ -174,5 +182,11 @@ fn test_args_to_struct_error_messages() {
 		assert false, 'args_to_struct should fail here'
 	} else {
 		assert err.msg() == 'no match for the last entry `oo` in long style parsing mode'
+	}
+
+	if _ := a2s.args_to_struct[IgnoreConfig](ignore_args_error, style: .long) {
+		assert false, 'args_to_struct should not have reached this assert'
+	} else {
+		assert err.msg() == '??'
 	}
 }
