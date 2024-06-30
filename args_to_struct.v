@@ -63,17 +63,22 @@ struct StructField {
 }
 
 fn generic_to_map[T]() !map[string]StructField {
+@[if trace_parse ?]
+fn trace_println(str string) {
+	println(str)
+}
 	mut struct_fields := map[string]StructField{}
 	mut struct_name := ''
 	$if T is $struct {
 		struct_name = T.name
+		trace_println('mapping struct "${struct_name}"...')
 		// Handle positional first so they can be marked as handled
 		$for field in T.fields {
 			mut match_name := field.name.replace('_', '-')
-			println('looking at "${field.name}":')
+			trace_println('looking at "${field.name}":')
 			mut attrs := map[string]string{}
 			for attr in field.attrs {
-				println('\tattribute: "${attr}"')
+				trace_println('\tattribute: "${attr}"')
 				if attr.contains(':') {
 					split := attr.split(':')
 					attrs[split[0].trim(' ')] = split[1].trim(' ')
@@ -180,7 +185,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 						$if field.typ is string {
 							result.$(field.name) = entry
 						}
-						println('Identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
+						trace_println('Identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
 						handled_fields << field.name
 						handled_pos << index
 					}
@@ -199,7 +204,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 		mut pos_is_handled := pos in handled_pos
 		if !pos_is_handled {
 			if flag == config.option_stop {
-				println('reached option stop (${config.option_stop}) at index ${pos}')
+				trace_println('reached option stop (${config.option_stop}) at index ${pos}')
 				break
 			}
 		}
@@ -242,7 +247,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				is_short_delimiter := used_delimiter.count(delimiter) == 1
 				is_invalid_delimiter := !is_long_delimiter && !is_short_delimiter
 
-				println('looking at ${used_delimiter} ${if is_long_delimiter {
+				trace_println('looking at ${used_delimiter} ${if is_long_delimiter {
 					'long'
 				} else {
 					'short'
@@ -263,7 +268,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 						return error('long delimiter `${used_delimiter}` for flag `${flag}` in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
 					}
 					if field.short_only {
-						println('Skipping long delimiter `${used_delimiter}` match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
+						trace_println('Skipping long delimiter `${used_delimiter}` match for ${struct_name}.${field_name} since it has [short_only: ${flag_short_name}]')
 					}
 				}
 
@@ -275,7 +280,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 
 				if field.is_bool {
 					if flag_name == field.match_name {
-						println('Identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
+						trace_println('Identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
 						identified_fields[field_name] = Flag{
 							raw: flag
 							field_name: field_name
@@ -318,11 +323,11 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					}
 				}
 			} else if is_option_stop {
-				println('option stop "${flag_name}" at index "${pos}"')
+				trace_println('option stop "${flag_name}" at index "${pos}"')
 			} else {
 				if field.has_tail {
 					if last_handled_pos := handled_pos[handled_pos.len - 1] {
-						println('last_handled_pos: ${last_handled_pos}')
+						trace_println('last_handled_pos: ${last_handled_pos}')
 						if pos == last_handled_pos + 1 {
 							if field.is_multi {
 								identified_multi_fields[field_name] << Flag{
@@ -402,7 +407,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			}
 			for f in identified_multi_fields[field.name] {
 				$if field.typ is []string {
-					println('assigning ${field.name} << ${f}')
+					trace_println('assigning ${field.name} << ${f}')
 					result.$(field.name) << f.arg or {
 						return error('failed appending ${f} to ${field.name}')
 					}
@@ -430,7 +435,7 @@ fn parse_gnu_long(flag_context FlagContext, field StructField, mut identified_fi
 	if flag_name == field.match_name {
 		arg := flag.all_after('=')
 		if field.is_multi {
-			println('Identified a match for (GNU style multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
+			trace_println('Identified a match for (GNU style multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
 			identified_multi_fields[field_name] << Flag{
 				raw: flag
 				field_name: field_name
@@ -440,7 +445,7 @@ fn parse_gnu_long(flag_context FlagContext, field StructField, mut identified_fi
 				pos: pos
 			}
 		} else {
-			println('Identified a match for (GNU style) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
+			trace_println('Identified a match for (GNU style) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
 			identified_fields[field_name] = Flag{
 				raw: flag
 				field_name: field_name
@@ -476,12 +481,13 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 	count_of_first_letter_repeats := flag_name.count(first_letter)
 	count_of_next_first_letter_repeats := next.count(next_first_letter)
 
+	trace_println('${@FN} looking at: ${flag_context}')
 	if first_letter == flag_short_name {
 		// `-vvvvv`, `-vv vvv` or `-v vvvv`
 		if field.can_repeat {
 			mut do_continue := false
 			if count_of_first_letter_repeats == flag_name.len {
-				print('Identified a match for (repeatable) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
+				trace_println('Identified a match for (repeatable) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
 				identified_fields[field_name] = Flag{
 					raw: flag
 					field_name: field_name
@@ -495,7 +501,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 
 				if next_first_letter == first_letter
 					&& count_of_next_first_letter_repeats == next.len {
-					println('field "${field_name}" allow repeats and ${flag} ${next} repeats ${
+					trace_println('field "${field_name}" allow repeats and ${flag} ${next} repeats ${
 						count_of_next_first_letter_repeats + count_of_first_letter_repeats} times (via argument)')
 					identified_fields[field_name] = Flag{
 						raw: flag
@@ -509,7 +515,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 					handled_pos << pos + 1 // next
 					do_continue = true
 				} else {
-					println('field "${field_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
+					trace_println('field "${field_name}" allow repeats and ${flag} repeats ${count_of_first_letter_repeats} times')
 				}
 				if do_continue {
 					return true
@@ -527,7 +533,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 			if next == '' {
 				return error('flag "${flag}" expects an argument')
 			}
-			println('Identified a match for (multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${next}')
+			trace_println('Identified a match for (multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${next}')
 
 			identified_multi_fields[field_name] << Flag{
 				raw: flag
@@ -556,7 +562,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 		if next == '' {
 			return error('flag "${flag}" expects an argument')
 		}
-		println('Identified a match for (short only) ${struct_name}.${field_name} (${field.match_name}) = ${flag_short_name} = ${next}')
+		trace_println('Identified a match for (short only) ${struct_name}.${field_name} (${field.match_name}) = ${flag_short_name} = ${next}')
 
 		identified_fields[field_name] = Flag{
 			raw: flag
@@ -573,7 +579,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 		}
 		return true
 	} else if flag_name == field.match_name && !(field.short_only && flag_name == flag_short_name) {
-		println('Identified a match for (repeats) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
+		trace_println('Identified a match for (repeats) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} ')
 		if next == '' {
 			return error('flag "${flag}" expects an argument')
 		}
