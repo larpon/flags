@@ -1,8 +1,8 @@
 module args_to_struct
 
 struct Flag {
-	raw        string  [required]
-	field_name string  [required]
+	raw        string  @[required]
+	field_name string  @[required]
 	delimiter  string
 	name       string
 	arg        ?string
@@ -11,7 +11,7 @@ struct Flag {
 }
 
 struct FlagContext {
-	raw         string [required]
+	raw         string @[required]
 	delimiter   string
 	name        string
 	next        string
@@ -20,7 +20,7 @@ struct FlagContext {
 	pos         int
 }
 
-[params]
+@[params]
 pub struct ArgsToStructConfig {
 	delimiter       string = '-'
 	style           Style  = .short_long
@@ -35,7 +35,7 @@ pub enum ErrorReporting {
 	relaxed
 }
 
-[flag]
+@[flag]
 pub enum Ignore {
 	nothing
 	at_attr
