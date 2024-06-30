@@ -22,11 +22,12 @@ struct FlagContext {
 
 @[params]
 pub struct ArgsToStructConfig {
+pub:
 	delimiter       string = '-'
 	style           Style  = .short_long
 	option_stop     string = '--'
 	error_reporting ErrorReporting = .strict
-	skip_first      bool
+	skip            u16
 	ignore          Ignore
 }
 
@@ -45,28 +46,35 @@ pub enum Style {
 	short // Posix short only, allows mulitple shorts -def is `-d -e -f` and "sticky" arguments e.g.: `-ofoo` = `-o foo`
 	short_long // extends `posix` style shorts with GNU style long options: `--flag` or `--name=value`
 	long // GNU style long option *only*. E.g.: `--name` or `--name=value`
-	go_flag // GO `flag` module style. Single flag denote `-` followed by string identifier e.g.: `-verbose` or `-v` and both long `--name value` and GNU long `--name=value`
-	chaos // only fields in struct T that have a style tag, which is one or more of `at`, `short: XYZ`, `long: XYZ` or `go_flag: XYZ`
+	// go_flag // GO `flag` module style. Single flag denote `-` followed by string identifier e.g.: `-verbose`, `-name value`, `-v` or `-n value` and both long `--name value` and GNU long `--name=value`
+	v // V style flags as found in flags for the `v` compiler. Single flag denote `-` followed by string identifier e.g.: `-verbose`, `-name value`, `-v` or `-n value`
+	// chaos // only fields in struct T that have a style tag, which is one or more of `at`, `short: XYZ`, `long: XYZ` or `go_flag: XYZ`
+}
+
+struct Struct {
+	name   string
+	fields map[string]StructField
 }
 
 struct StructField {
-	struct_name string
-	name        string
-	match_name  string
-	short_name  string
-	is_bool     bool
-	is_multi    bool
-	has_tail    bool
-	short_only  bool
-	can_repeat  bool
-	attrs       map[string]string
+	name       string
+	match_name string
+	short_name string
+	is_bool    bool
+	is_multi   bool
+	is_ignore  bool
+	has_tail   bool
+	short_only bool
+	can_repeat bool
+	attrs      map[string]string
 }
 
-fn generic_to_map[T]() !map[string]StructField {
 @[if trace_parse ?]
 fn trace_println(str string) {
 	println(str)
 }
+
+fn get_struct_info[T]() !Struct {
 	mut struct_fields := map[string]StructField{}
 	mut struct_name := ''
 	$if T is $struct {
@@ -122,7 +130,6 @@ fn trace_println(str string) {
 
 			struct_fields[field.name] = StructField{
 				name: field.name
-				struct_name: struct_name
 				match_name: match_name
 				is_bool: is_bool
 				is_multi: is_multi
@@ -138,7 +145,10 @@ fn trace_println(str string) {
 		return error('The type `${T.name}` can not be decoded.')
 	}
 
-	return struct_fields
+	return Struct{
+		name: struct_name
+		fields: struct_fields
+	}
 }
 
 fn (m map[string]Flag) query_flag_with_name(name string) ?Flag {
@@ -156,14 +166,18 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	mut no_match := []string{}
 	mut flags := input.clone() // TODO
 
-	mut struct_fields := generic_to_map[T]()!
+	mut struct_info := get_struct_info[T]()!
+	struct_fields := struct_info.fields.clone()
 
 	mut handled_fields := []string{}
 	mut identified_fields := map[string]Flag{}
 	mut identified_multi_fields := map[string][]Flag{}
 	mut handled_pos := []int{}
-	if config.skip_first {
-		handled_pos << 0 // skip first entry, aka. the "exe" or "executable"
+
+	if config.skip > 0 {
+		for i in 0 .. int(config.skip) {
+			handled_pos << i // skip X entry, aka. the "exe" or "executable" - or even more if user wishes
+		}
 	}
 
 	mut struct_name := ''
@@ -198,10 +212,9 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 		return error('The type `${T.name}` can not be decoded.')
 	}
 
-	//  mut skip_pos
 	delimiter := config.delimiter
 	// Get the index of the last flag (used to find any trailing args)
-	index_of_last_flag := index_of_last(flags, delimiter) // TODO can probably be removed
+	// index_of_last_flag := index_of_last(flags, delimiter) // TODO can probably be removed
 	for pos, flag in flags {
 		mut pos_is_handled := pos in handled_pos
 		if !pos_is_handled {
@@ -305,12 +318,13 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 					name: flag_name
 					next: next
 					short_name: flag_short_name
+					struct_name: struct_info.name
 					pos: pos
 				}
 
 				if is_short_delimiter {
 					if style in [.short, .short_long] {
-						if parse_posix_short(flag_context, field, mut identified_fields, mut
+						if parse_posix_short(config, flag_context, field, mut identified_fields, mut
 							identified_multi_fields, mut handled_pos)!
 						{
 							continue
@@ -321,7 +335,7 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 				if is_long_delimiter {
 					// Parse GNU `--name=value`
 					if style in [.long, .short_long] {
-						if parse_gnu_long(flag_context, field, mut identified_fields, mut
+						if parse_gnu_long(config, flag_context, field, mut identified_fields, mut
 							identified_multi_fields, mut handled_pos)!
 						{
 							continue
@@ -428,14 +442,14 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 	return result
 }
 
-fn parse_gnu_long(flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
+fn parse_gnu_long(config ArgsToStructConfig, flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
 	flag := flag_context.raw
 	mut flag_name := flag_context.name
 	flag_short_name := flag_context.short_name
 	pos := flag_context.pos
 	used_delimiter := flag_context.delimiter
 	// mut next := flag_context.next
-	struct_name := field.struct_name
+	struct_name := flag_context.struct_name
 
 	field_name := field.name
 	if flag_name == field.match_name {
@@ -467,14 +481,14 @@ fn parse_gnu_long(flag_context FlagContext, field StructField, mut identified_fi
 	return false
 }
 
-fn parse_posix_short(flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
+fn parse_posix_short(config ArgsToStructConfig, flag_context FlagContext, field StructField, mut identified_fields map[string]Flag, mut identified_multi_fields map[string][]Flag, mut handled_pos []int) !bool {
 	flag := flag_context.raw
 	mut flag_name := flag_context.name
 	flag_short_name := flag_context.short_name
 	pos := flag_context.pos
 	used_delimiter := flag_context.delimiter
 	mut next := flag_context.next
-	struct_name := field.struct_name
+	struct_name := flag_context.struct_name
 
 	field_name := field.name
 
@@ -556,7 +570,7 @@ fn parse_posix_short(flag_context FlagContext, field StructField, mut identified
 			return true
 		}
 	}
-	if field.short_only && first_letter == flag_short_name {
+	if (config.style == .short || field.short_only) && first_letter == flag_short_name {
 		split := flag_name.trim_string_left(flag_short_name)
 		mut next_is_handled := true
 		if split != '' {
