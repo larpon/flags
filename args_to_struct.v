@@ -106,6 +106,7 @@ fn trace_println(str string) {
 			}
 			can_repeat := if _ := attrs['repeats'] { true } else { false }
 			has_tail := if _ := attrs['tail'] { true } else { false }
+			is_ignore := if _ := attrs['ignore'] { true } else { false }
 
 			mut is_bool := false
 			$if field.typ is bool {
@@ -125,6 +126,7 @@ fn trace_println(str string) {
 				match_name: match_name
 				is_bool: is_bool
 				is_multi: is_multi
+				is_ignore: is_ignore
 				has_tail: has_tail
 				can_repeat: can_repeat
 				short_only: is_short_only
@@ -213,6 +215,10 @@ pub fn args_to_struct[T](input []string, config ArgsToStructConfig) !T {
 			next = flags[pos + 1]
 		}
 		for field_name, field in struct_fields {
+			if field.is_ignore {
+				trace_println('field "${field_name}" has an @[ignore] attribute')
+				continue
+			}
 			if _ := identified_fields[field_name] {
 				// println(id_flag)
 				continue
