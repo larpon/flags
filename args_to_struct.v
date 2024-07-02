@@ -14,16 +14,10 @@ struct FlagContext {
 	raw         string @[required] // raw arg array entry
 	delimiter   string // usually `'-'`
 	name        string // either struct field name or what is defined in `@[long: <name>]`
-	next        string // peek at what is the next arg
+	next        string // peek at what is the next flag/arg
 	short_name  string // `s` in `-s`
 	struct_name string // name of the struct that is getting mapped to
 	pos         int    // position in arg array
-}
-
-@[flag]
-pub enum Ignore {
-	nothing
-	at_attr
 }
 
 pub enum Style {
@@ -56,14 +50,13 @@ struct StructField {
 @[params]
 pub struct ParseConfig {
 pub:
-	delimiter   string = '-' // delimiter used for flags
-	style       Style  = .short_long // expected flag style
-	option_stop string = '--' // string that stops parsing flags/options
-	skip        u16    // skip this amount in the input argument array, usually `1` for skipping executable entry
-	ignore      Ignore // flags for what to ignore
+	delimiter string = '-' // delimiter used for flags
+	style     Style  = .short_long // expected flag style
+	stop      ?string // single, usually '--', string that stops parsing flags/options
+	skip      u16     // skip this amount in the input argument array, usually `1` for skipping executable or subcmd entry
 }
 
-struct FlagParser {
+pub struct FlagParser {
 	config ParseConfig @[required]
 	input  []string    @[required]
 mut:
@@ -129,12 +122,15 @@ fn (fp FlagParser) get_struct_info[T]() !StructInfo {
 
 			mut is_bool := false
 			$if field.typ is bool {
+				trace_println('\tfield "${field.name}" is a bool')
 				is_bool = true
 			}
 			mut is_array := false
 			$if field.typ is []string {
+				trace_println('\tfield "${field.name}" is string array')
 				is_array = true
 			} $else $if field.typ is []int {
+				trace_println('\tfield "${field.name}" is int array')
 				is_array = true
 			}
 			// TODO
@@ -171,48 +167,40 @@ fn (m map[string]Flag) query_flag_with_name(name string) ?Flag {
 	return none
 }
 
-pub fn to_struct[T](input []string, config ParseConfig) !T {
+pub fn to_struct[T](input []string, config ParseConfig) !(T, []int) {
 	mut fp := FlagParser{
 		config: config
 		input: input
 	}
-	return fp.gen_struct[T]()!
+	fp.parse[T]()!
+	st := fp.to_struct[T]()!
+	return st, fp.no_matches()
 }
 
-fn (mut fp FlagParser) pre_parse[T](mut result T) ! {
-	$if T is $struct {
-		config := fp.config
-		struct_name := T.name
-		/*
-		$for attr in T.attributes {
-			println('${T.name} attribute ${attr}')
-		}
-		*/
+pub fn (fp FlagParser) no_matches() []int {
+	return fp.no_match
 
-		// Handle positional first so they can be marked as handled
-		$for field in T.fields {
-			if !config.ignore.has(.at_attr) {
-				if at_pos := fp.si.fields[field.name].attrs['at'] {
-					attr_value := at_pos.int()
-					if entry := fp.input[attr_value] {
-						index := fp.input.index(entry)
-
-						$if field.typ is string {
-							result.$(field.name) = entry
-						}
-						trace_println('${@FN}: identified a match (at: ${attr_value}) for ${struct_name}.${field.name} = ${entry}')
-						fp.handled_fields << field.name
-						fp.handled_pos << index
-					}
-				}
-			}
-		}
-	} $else {
-		return error('the type `${T.name}` can not be decoded.')
-	}
+	// is_flag := flag.starts_with(delimiter)
+	// if !is_flag {
+	// 	if pos == fp.input.len - 1 {
+	// 		return error('no match for the last entry `${flag}` in ${style} style parsing mode')
+	// 	} else {
+	// 		return error('no match for `${flag}` at index ${pos} in ${style} style parsing mode')
+	// 	}
+	// }
+	// return error('no match for flag `${flag}` at index ${pos} in ${style} style parsing mode')
+	//
+	// if fp.no_match.len > 0 {
+	// 	mut no_match_str := '['
+	// 	for index in fp.no_match {
+	// 		no_match_str += '"${fp.input[index]}", '
+	// 	}
+	// 	no_match_str = no_match_str.trim_right(', ') + ']'
+	// 	return error('could not match ${fp.no_match}')
+	// }
 }
 
-fn (mut fp FlagParser) gen_struct[T]() !T {
+pub fn (mut fp FlagParser) parse[T]() ! {
 	config := fp.config
 	style := config.style
 	delimiter := config.delimiter
@@ -224,25 +212,23 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 		}
 	}
 
-	// Gather information about T
+	// Gather runtime information about T
 	fp.si = fp.get_struct_info[T]()!
 	struct_name := fp.si.name
-
-	// Generate T result
-	mut result := T{}
-
-	// Pre-parse handles positional `at: X` fields
-	fp.pre_parse[T](mut result)!
 
 	// Get the index of the last flag (used to find any trailing args)
 	// index_of_last_flag := index_of_last(flags, delimiter) // TODO can probably be removed
 
 	for pos, flag in flags {
+		if flag == '' {
+			fp.no_match << pos
+			continue
+		}
 		mut pos_is_handled := pos in fp.handled_pos
 		if !pos_is_handled {
 			// Stop parsing as soon as possible if `--` or user defined is encountered
-			if flag == config.option_stop {
-				trace_println('${@FN}: reached option stop (${config.option_stop}) at index ${pos}')
+			if flag == config.stop or { '' } {
+				trace_println('${@FN}: reached option stop (${config.stop}) at index ${pos}')
 				break
 			}
 		}
@@ -267,7 +253,7 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 				continue
 			}
 			mut is_flag := false // `flag` starts with `-` (default value) or user defined
-			mut is_option_stop := false // Single `--` (default value) or user defined
+			mut is_stop := false // Single `--` (default value) or user defined
 			mut flag_name := ''
 			flag_short_name := field.short_name
 			if flag.starts_with(delimiter) {
@@ -277,10 +263,10 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 				if style in [.long, .short_long] {
 					flag_name = flag_name.all_before('=')
 				}
-				if flag == config.option_stop {
+				if flag == config.stop or { '' } {
 					is_flag = false
 					flag_name = flag
-					is_option_stop = true
+					is_stop = true
 				}
 			}
 
@@ -311,9 +297,6 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 					if style == .short {
 						return error('long delimiter `${used_delimiter}` encountered in flag `${flag}` in ${style} (POSIX) style parsing mode')
 					}
-					if !field.is_bool && style in [.long, .short_long] && !flag.contains('=') {
-						return error('long delimiter `${used_delimiter}` for flag `${flag}` in ${style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
-					}
 					if field.short_only {
 						trace_println('${@FN}: skipping long delimiter `${used_delimiter}` match for ${struct_name}.${field_name} since it has [only: ${flag_short_name}]')
 					}
@@ -327,6 +310,10 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 
 				if field.is_bool {
 					if flag_name == field.match_name {
+						arg := if flag.contains('=') { flag.all_after('=') } else { '' }
+						if arg != '' {
+							return error('flag `${flag}` can not be assigned to bool field "${field_name}"')
+						}
 						trace_println('${@FN}: identified a match for (bool) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name}')
 						fp.identified_fields[field_name] = Flag{
 							raw: flag
@@ -370,7 +357,7 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 						}
 					}
 				}
-			} else if is_option_stop {
+			} else if is_stop {
 				trace_println('${@FN}: option stop "${flag_name}" at index "${pos}"')
 			} else {
 				if field.has_tail {
@@ -397,43 +384,23 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 						}
 					}
 				}
-				// if flag !in no_match {
-				//	no_match << flag
-				//}
-				//
-				// return error('invalid flag "${flag}"')
-				// println('looking at non-flag "${flag}" "${field.match_name}":')
 			}
 		}
 		if pos !in fp.handled_pos && pos !in fp.no_match {
 			fp.no_match << pos
 			flag_name := flag.trim_left(delimiter)
 			if already_flag := fp.identified_fields.query_flag_with_name(flag_name) {
-				return error('flag `${flag}` is already mapped to field `${already_flag.field_name}` via `${already_flag.delimiter}${already_flag.name} ${already_flag.arg or {
+				return error('flag `${flag} ${next}` is already mapped to field `${already_flag.field_name}` via `${already_flag.delimiter}${already_flag.name} ${already_flag.arg or {
 					''
 				}}`')
 			}
-			is_flag := flag.starts_with(delimiter)
-			if !is_flag {
-				if pos == fp.input.len - 1 {
-					return error('no match for the last entry `${flag}` in ${style} style parsing mode')
-				} else {
-					return error('no match for `${flag}` at index ${pos} in ${style} style parsing mode')
-				}
-			}
-			return error('no match for flag `${flag}` at index ${pos} in ${style} style parsing mode')
 		}
-		// flags.delete(pos)
 	}
+}
 
-	if fp.no_match.len > 0 {
-		mut no_match_str := '['
-		for index in fp.no_match {
-			no_match_str += '"${fp.input[index]}", '
-		}
-		no_match_str = no_match_str.trim_right(', ') + ']'
-		return error('could not match ${fp.no_match}')
-	}
+pub fn (fp FlagParser) to_struct[T]() !T {
+	// Generate T result
+	mut result := T{}
 
 	$if T is $struct {
 		$for field in T.fields {
@@ -452,6 +419,9 @@ fn (mut fp FlagParser) gen_struct[T]() !T {
 					}
 						.f64()
 				} $else $if field.typ is bool {
+					if arg := f.arg {
+						return error('can not assign ${arg} to bool field ${field.name}')
+					}
 					result.$(field.name) = true
 				} $else $if field.typ is string {
 					// trace_println('${@FN}: assigning (string) ${field.name} = ${f}')
@@ -531,7 +501,11 @@ fn (mut fp FlagParser) parse_gnu_long(flag_context FlagContext, field StructFiel
 
 	field_name := field.name
 	if flag_name == field.match_name {
-		arg := flag.all_after('=')
+		if !field.is_bool && fp.config.style in [.long, .short_long] && !flag.contains('=') {
+			return error('long delimiter (${field_name}) `${used_delimiter}` for flag `${flag}` in ${fp.config.style} style parsing mode, expects GNU style assignment. E.g.: --name=value')
+		}
+
+		arg := if flag.contains('=') { flag.all_after('=') } else { '' }
 		if field.is_array {
 			trace_println('${@FN}: identified a match for (GNU style multiple occurences) ${struct_name}.${field_name} = ${flag}/${flag_name}/${flag_short_name} arg: ${arg}')
 			fp.identified_multi_fields[field_name] << Flag{
