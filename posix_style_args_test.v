@@ -17,7 +17,7 @@ struct Config {
 }
 
 fn test_pure_posix_short() {
-	config := a2s.args_to_struct[Config](exe_and_posix_args, skip: 1, style: .short)!
+	config := a2s.to_struct[Config](exe_and_posix_args, skip: 1, style: .short)!
 	assert config.verbosity == 5
 	assert config.test == 'abc'
 	assert 'one' in config.device
@@ -29,7 +29,7 @@ fn test_pure_posix_short() {
 }
 
 fn test_pure_posix_short_no_exe() {
-	config := a2s.args_to_struct[Config](exe_and_posix_args[1..], style: .short)!
+	config := a2s.to_struct[Config](exe_and_posix_args[1..], style: .short)!
 	assert config.verbosity == 5
 	assert config.test == 'abc'
 	assert 'one' in config.device
@@ -41,7 +41,7 @@ fn test_pure_posix_short_no_exe() {
 }
 
 fn test_pure_posix_short_with_tail() {
-	config := a2s.args_to_struct[Config](exe_and_posix_args_with_tail, skip: 1, style: .short)!
+	config := a2s.to_struct[Config](exe_and_posix_args_with_tail, skip: 1, style: .short)!
 	assert config.verbosity == 6
 	assert config.test == 'abc'
 	assert 'one' in config.device
@@ -56,7 +56,7 @@ fn test_pure_posix_short_with_tail() {
 }
 
 fn test_pure_posix_short_with_tail_no_exe() {
-	config := a2s.args_to_struct[Config](exe_and_posix_args_with_tail[1..], style: .short)!
+	config := a2s.to_struct[Config](exe_and_posix_args_with_tail[1..], style: .short)!
 	assert config.verbosity == 6
 	assert config.test == 'abc'
 	assert 'one' in config.device

@@ -52,7 +52,7 @@ struct IgnoreConfig {
 
 fn test_args_to_struct() {
 	// Test .short_long parse style
-	config1 := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd, skip: 1)!
+	config1 := a2s.to_struct[Config](posix_and_gnu_args_with_subcmd, skip: 1)!
 	assert config1.cmd == 'subcmd'
 	assert config1.mix == false
 	assert config1.verbosity == 5
@@ -63,7 +63,7 @@ fn test_args_to_struct() {
 	assert 'three' in config1.device
 	assert config1.linker_option == 'windows'
 
-	config2 := a2s.args_to_struct[Config](posix_and_gnu_args,
+	config2 := a2s.to_struct[Config](posix_and_gnu_args,
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
 	)!
 	assert config2.cmd == ''
@@ -79,7 +79,7 @@ fn test_args_to_struct() {
 
 	mut posix_and_gnu_args_plus_test := posix_and_gnu_args.clone()
 	posix_and_gnu_args_plus_test << ['--test=ok', '-d', 'four']
-	config3 := a2s.args_to_struct[Config](posix_and_gnu_args_plus_test,
+	config3 := a2s.to_struct[Config](posix_and_gnu_args_plus_test,
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
 	)!
 	assert config3.cmd == ''
@@ -94,7 +94,7 @@ fn test_args_to_struct() {
 	assert 'four' == config3.device[3]
 	assert config3.linker_option == 'windows'
 
-	config4 := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd_and_paths, skip: 1)!
+	config4 := a2s.to_struct[Config](posix_and_gnu_args_with_subcmd_and_paths, skip: 1)!
 	assert config4.cmd == 'subcmd'
 	assert config4.verbosity == 5
 	assert config4.amount == 8
@@ -111,7 +111,7 @@ fn test_args_to_struct() {
 
 fn test_long_args_to_struct() {
 	// Test .long parse style
-	lc1 := a2s.args_to_struct[LongConfig](gnu_args, style: .long)!
+	lc1 := a2s.to_struct[LongConfig](gnu_args, style: .long)!
 	assert lc1.f == 10.2
 	assert lc1.mix == true
 	assert lc1.some_test == 'test'
@@ -122,7 +122,7 @@ fn test_long_args_to_struct() {
 
 fn test_args_to_struct_error_messages() {
 	// Test error for GNU long flag in .short (Posix) mode
-	if _ := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd,
+	if _ := a2s.to_struct[Config](posix_and_gnu_args_with_subcmd,
 		skip: 1
 		style: .short
 	)
@@ -133,7 +133,7 @@ fn test_args_to_struct_error_messages() {
 	}
 
 	// Test double mapping of flags
-	if _ := a2s.args_to_struct[Config](posix_args_error,
+	if _ := a2s.to_struct[Config](posix_args_error,
 		skip: 1
 		ignore: a2s.Ignore(.at_attr) // ignores @[at: X]
 	)
@@ -145,7 +145,7 @@ fn test_args_to_struct_error_messages() {
 
 	for e_num in all_style_enums {
 		// Test error for non-flag as first arg (usually the `/path/to/executable`) - which must be skipped with `.skip`
-		if _ := a2s.args_to_struct[Config](posix_and_gnu_args_with_subcmd,
+		if _ := a2s.to_struct[Config](posix_and_gnu_args_with_subcmd,
 			style: e_num
 		)
 		{
@@ -158,7 +158,7 @@ fn test_args_to_struct_error_messages() {
 	}
 
 	for e_num in posix_gnu_style_enums {
-		if _ := a2s.args_to_struct[Config](mixed_args, skip: 1, style: e_num) {
+		if _ := a2s.to_struct[Config](mixed_args, skip: 1, style: e_num) {
 			assert false, 'args_to_struct should not have reached this assert'
 		} else {
 			if e_num == .short {
@@ -172,15 +172,15 @@ fn test_args_to_struct_error_messages() {
 			assert true
 		}
 	}
-	if _ := a2s.args_to_struct[LongConfig](gnu_args_error, style: .long) {
+	if _ := a2s.to_struct[LongConfig](gnu_args_error, style: .long) {
 		assert false, 'args_to_struct should not have reached this assert'
 	} else {
 		assert err.msg() == 'no match for the last entry `oo` in long style parsing mode'
 	}
 
-	if _ := a2s.args_to_struct[IgnoreConfig](ignore_args_error, style: .long) {
+	if _ := a2s.to_struct[IgnoreConfig](ignore_args_error, style: .long) {
 		assert false, 'args_to_struct should not have reached this assert'
 	} else {
-		assert err.msg() == '??'
+		assert err.msg() == 'long delimiter `--` for flag `--show-version` in long style parsing mode, expects GNU style assignment. E.g.: --name=value'
 	}
 }
