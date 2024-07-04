@@ -89,7 +89,7 @@ fn (fp FlagParser) get_struct_info[T]() !StructInfo {
 		trace_println('${@FN}: mapping struct "${struct_name}"...')
 		// Handle positional first so they can be marked as handled
 		$for field in T.fields {
-      mut hints := FieldHints.zero()
+			mut hints := FieldHints.zero()
 			mut match_name := field.name.replace('_', '-')
 			trace_println('${@FN}: field "${field.name}":')
 			mut attrs := map[string]string{}
@@ -109,7 +109,7 @@ fn (fp FlagParser) get_struct_info[T]() !StructInfo {
 				if only.len == 0 {
 					return error('attribute @[only] on ${struct_name}.${match_name} can not be empty, use @[only: x]')
 				} else if only.len == 1 {
-          hints.set(.short_only)
+					hints.set(.short_only)
 					attrs['short'] = only
 				} else if only.len > 1 {
 					match_name = only
@@ -121,36 +121,42 @@ fn (fp FlagParser) get_struct_info[T]() !StructInfo {
 			}
 
 			$if field.typ is int {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is i64 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is u64 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is i32 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is u32 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is i16 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is u16 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is i8 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			} $else $if field.typ is u8 {
-        hints.set(.is_int_type)
+				hints.set(.is_int_type)
 			}
 
-			if _ := attrs['repeats'] { hints.set(.can_repeat) }
-			if _ := attrs['tail'] { hints.set(.has_tail) }
-			if _ := attrs['ignore'] { hints.set(.is_ignore) }
+			if _ := attrs['repeats'] {
+				hints.set(.can_repeat)
+			}
+			if _ := attrs['tail'] {
+				hints.set(.has_tail)
+			}
+			if _ := attrs['ignore'] {
+				hints.set(.is_ignore)
+			}
 
 			$if field.typ is bool {
 				trace_println('\tfield "${field.name}" is a bool')
-        hints.set(.is_bool)
+				hints.set(.is_bool)
 			}
 			$if field.is_array {
 				trace_println('\tfield "${field.name}" is array')
-        hints.set(.is_array)
+				hints.set(.is_array)
 			}
 			//    $if field.typ is []string {
 			// 	trace_println('\tfield "${field.name}" is string array')
@@ -168,7 +174,7 @@ fn (fp FlagParser) get_struct_info[T]() !StructInfo {
 			struct_fields[field.name] = StructField{
 				name: field.name
 				match_name: match_name
-        hints: hints
+				hints: hints
 				short_name: short_name
 				attrs: attrs
 			}
@@ -571,7 +577,8 @@ fn (mut fp FlagParser) pair_gnu_long(flag_context FlagContext, field StructField
 	}
 
 	if flag_name == field.match_name {
-		if !field.hints.has(.is_bool) && fp.config.style in [.long, .short_long] && !flag.contains('=') {
+		if !field.hints.has(.is_bool) && fp.config.style in [.long, .short_long]
+			&& !flag.contains('=') {
 			// if field.hints.has(.is_int_type) && field.hints.has(.can_repeat) {
 			// 	mut repeats := 1
 			// 	if f := fp.identified_fields[field_name] {
@@ -744,7 +751,8 @@ fn (mut fp FlagParser) pair_posix_short(flag_context FlagContext, field StructFi
 			return true
 		}
 	}
-	if (fp.config.style == .short || field.hints.has(.short_only)) && first_letter == field.short_name {
+	if (fp.config.style == .short || field.hints.has(.short_only))
+		&& first_letter == field.short_name {
 		split := flag_name.trim_string_left(field.short_name)
 		mut next_is_handled := true
 		if split != '' {
@@ -772,7 +780,8 @@ fn (mut fp FlagParser) pair_posix_short(flag_context FlagContext, field StructFi
 			fp.handled_pos << pos + 1 // next
 		}
 		return true
-	} else if flag_name == field.match_name && !(field.hints.has(.short_only) && flag_name == field.short_name) {
+	} else if flag_name == field.match_name && !(field.hints.has(.short_only)
+		&& flag_name == field.short_name) {
 		trace_println('${@FN}: identified a match for (repeats) ${struct_name}.${field_name}/${field.short_name} = ${flag}/${flag_name} ')
 		if next == '' {
 			return error('flag "${flag}" expects an argument')
