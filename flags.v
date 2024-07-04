@@ -1,4 +1,4 @@
-module args_to_struct
+module flags
 
 struct Flag {
 	raw        string  @[required]

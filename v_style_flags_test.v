@@ -1,5 +1,5 @@
 // Test .v (V) parse style
-import args_to_struct as a2s
+import flags
 
 const exe_and_v_args = ['/path/to/exe', '-version', '-d', 'ident=val', '-o', '/path/to', '-test',
 	'abc', '-done', '-define', 'two', '-live']
@@ -18,7 +18,7 @@ struct Prefs {
 }
 
 fn test_pure_v_style() {
-	prefs, _ := a2s.to_struct[Prefs](exe_and_v_args, skip: 1, style: .v)!
+	prefs, _ := flags.to_struct[Prefs](exe_and_v_args, skip: 1, style: .v)!
 	assert prefs.version
 	assert prefs.is_live
 	assert prefs.is_done
@@ -32,7 +32,7 @@ fn test_pure_v_style() {
 }
 
 fn test_pure_v_style_no_exe() {
-	prefs, _ := a2s.to_struct[Prefs](exe_and_v_args[1..], style: .v)!
+	prefs, _ := flags.to_struct[Prefs](exe_and_v_args[1..], style: .v)!
 	assert prefs.version
 	assert prefs.is_live
 	assert prefs.is_done
@@ -46,7 +46,7 @@ fn test_pure_v_style_no_exe() {
 }
 
 fn test_pure_v_style_with_tail() {
-	prefs, _ := a2s.to_struct[Prefs](exe_and_v_args_with_tail, skip: 1, style: .v)!
+	prefs, _ := flags.to_struct[Prefs](exe_and_v_args_with_tail, skip: 1, style: .v)!
 	assert prefs.version
 	assert prefs.is_live
 	assert prefs.is_done
@@ -63,7 +63,7 @@ fn test_pure_v_style_with_tail() {
 }
 
 fn test_pure_v_style_with_tail_no_exe() {
-	prefs, _ := a2s.to_struct[Prefs](exe_and_v_args_with_tail[1..], style: .v)!
+	prefs, _ := flags.to_struct[Prefs](exe_and_v_args_with_tail[1..], style: .v)!
 	assert prefs.version
 	assert prefs.is_live
 	assert prefs.is_done
