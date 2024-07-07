@@ -86,14 +86,44 @@ pub:
 	style     Style  = .short_long // expected flag style
 pub mut:
 	name        string = os.file_name(os.executable()) // application name
-	version     string // application version
-	description string // application description
-	footer      string // application description footer written after auto-generated flags list/ field descriptions
-	max_width   u16    // maximum width of the documentation
+	version     string            // application version
+	description string            // application description
+	footer      string            // application description footer written after auto-generated flags list/ field descriptions
+	layout      DocLayout         // documentation layout
+	options     DocOptions        // documentation options
 	fields      map[string]string // doc strings for each field (overwrites @[doc: xxx] attributes)
 }
 
+@[flag]
+pub enum Show {
+	flags
+	flag_type
+	flag_hint
+	description
+	flags_header
+	footer
+	name_and_version
+}
+
+pub struct DocLayout {
+pub:
+	description_padding int = 28
+	description_width   int = 50
+	flag_indent         int = 2
+}
+
+pub struct DocOptions {
+pub:
+	flag_header string = '\nOptions:'
+	show        Show   = ~Show.zero()
+}
+
+pub fn (dl DocLayout) max_width() int {
+	return dl.flag_indent + dl.description_padding + dl.description_width
+}
+
 pub struct FlagMapper {
+pub:
 	config ParseConfig @[required]
 	input  []string    @[required]
 mut:
@@ -511,48 +541,43 @@ pub fn (mut fm FlagMapper) parse[T]() ! {
 }
 
 pub fn (fm FlagMapper) to_doc(dc DocConfig) !string {
-	// config := fm.config
-	// style := config.style
-	// delimiter := config.delimiter
-
-	/*
-pub struct DocConfig {
-pub:
-	delimiter string = '-' // delimiter used for flags
-	style     Style  = .short_long // expected flag style
-pub mut:
-	name        string // application name
-	version     string // application version
-	description string // application description
-	footer      string // application description footer written after auto-generated flags list/field descriptions
-  extras DocExtras{
-    description_padding: 27
-    flag_padding: 2
-  }
-	fields      map[string]string // doc strings for each field (overwrites @[xdoc: xxx] attributes)
-}
- */
-
 	mut docs := []string{}
 
-	docs << '${dc.name} ${dc.version}'
+	if dc.options.show.has(.name_and_version) {
+		docs << '${dc.name} ${dc.version}'
+	}
 
-	field_docs := fm.fields_docs(dc)!
+	if dc.options.show.has(.description) {
+		docs << keep_at_max(dc.description, dc.layout.max_width())
+	}
 
-	docs << field_docs
-
-	mut longest_line := 0
-	for doc_line in docs {
-		lines := doc_line.split('\n')
-		for line in lines {
-			if line.len > longest_line {
-				longest_line = line.len
+	if dc.options.show.has(.flags) {
+		fields_docs := fm.fields_docs(dc)!
+		if fields_docs.len > 0 {
+			if dc.options.show.has(.flags_header) {
+				docs << dc.options.flag_header
 			}
+			docs << fields_docs
 		}
 	}
-	docs.insert(1, '-'.repeat(longest_line))
 
-	return docs.join('\n')//.trim_space()
+	if dc.options.show.has(.footer) {
+		docs << keep_at_max(dc.footer, dc.layout.max_width())
+	}
+
+	if dc.options.show.has(.name_and_version) {
+		mut longest_line := 0
+		for doc_line in docs {
+			lines := doc_line.split('\n')
+			for line in lines {
+				if line.len > longest_line {
+					longest_line = line.len
+				}
+			}
+		}
+		docs.insert(1, '-'.repeat(longest_line))
+	}
+	return docs.join('\n')
 }
 
 pub fn (fm FlagMapper) fields_docs(dc DocConfig) ![]string {
@@ -565,11 +590,11 @@ pub fn (fm FlagMapper) fields_docs(dc DocConfig) ![]string {
 		.long, .short_long { dc.delimiter.repeat(2) }
 	}
 
-	pad_desc := 28
+	pad_desc := if dc.layout.description_padding < 0 { 0 } else { dc.layout.description_padding }
 	empty_padding := ' '.repeat(pad_desc)
-	indent_flags := 2
+	indent_flags := if dc.layout.flag_indent < 0 { 0 } else { dc.layout.flag_indent }
 	indent_flags_padding := ' '.repeat(indent_flags)
-  desc_max :=  50
+	desc_max := if dc.layout.description_width < 1 { 1 } else { dc.layout.description_width }
 
 	mut docs := []string{}
 	for _, field in fm.si.fields {
@@ -590,11 +615,18 @@ pub fn (fm FlagMapper) fields_docs(dc DocConfig) ![]string {
 			}
 			flag_line += '${long_delimiter}${long}'
 		}
-		if field.type_name != 'bool' {
-			flag_line += ' <${field.type_name}>'
-      if field.hints.has(.can_repeat) {
-			  flag_line += ' (can be repeated)'
-      }
+		if dc.options.show.has(.flag_type) && field.type_name != 'bool' {
+			if !field.hints.has(.can_repeat) {
+				flag_line += ' <${field.type_name.replace('[]', '')}>'
+			}
+		}
+		if dc.options.show.has(.flag_hint) {
+			if field.hints.has(.is_array) {
+				flag_line += ' (allowed multiple times)'
+			}
+			if field.hints.has(.can_repeat) {
+				flag_line += ', ${short_delimiter}${short}${short}${short}... (can repeat)'
+			}
 		}
 		flag_line_diff := flag_line.len - pad_desc
 		if flag_line_diff < 0 {
@@ -603,8 +635,8 @@ pub fn (fm FlagMapper) fields_docs(dc DocConfig) ![]string {
 				keep_at_max(doc, desc_max).replace('\n', '\n${empty_padding}') + '\n'
 		} else {
 			docs << flag_line
-			docs << empty_padding +
-				keep_at_max(doc, desc_max).replace('\n', '\n${empty_padding}') + '\n'
+			docs << empty_padding + keep_at_max(doc, desc_max).replace('\n', '\n${empty_padding}') +
+				'\n'
 		}
 	}
 	// Look for custom flag entries starting with delimiter
@@ -622,38 +654,46 @@ pub fn (fm FlagMapper) fields_docs(dc DocConfig) ![]string {
 			}
 		}
 	}
-  if docs.len > 0 {
-    docs[docs.len - 1] = docs[docs.len - 1].trim_right(' \r\n')
-  }
+	if docs.len > 0 {
+		docs[docs.len - 1] = docs[docs.len - 1].trim_right(' \n')
+	}
 	return docs
 }
 
 // keep_at_max returns `str` that is kept at a line width of `max` characters.
 // User provided newlines is ignored in case the `str` has to be corrected to
-// fit the provided `max` width value.
+// fit the provided `max` width value. Lines longer than `max` are not dealt with.
 fn keep_at_max(str string, max int) string {
-	if str.len <= max || str.count(' ') == 0 {
+	safe_max := if max <= 0 { 1 } else { max }
+	if str.len <= safe_max || str.count(' ') == 0 {
 		return str
 	}
 	mut fitted := ''
 	mut width := 0
 	mut last_possible_break := str.index(' ') or { 0 }
-	for i, c in str {
+	mut never_touched := true
+	s := str.trim_space()
+	for i, c in s {
 		width++
 		if c == ` ` {
 			last_possible_break = i
 		} else if c == `\n` {
 			width = 0
 		}
-		if width == max {
-			fitted = str[..last_possible_break] + '\n'
+		if width == safe_max {
+			never_touched = false
+			fitted = s[..last_possible_break] + '\n'
 			// At this point we are refitting the doc string so user provided newlines can not be kept
 			// ... at least not without a tremendous increase in code complexity, that highly likely
 			// will not suit all use-cases anyway.
-			fitted += keep_at_max(str[last_possible_break..].replace('\n',' ').trim(' '), max).trim(' ')
-		} else if width > max {
-      break
-    }
+			fitted += keep_at_max(s[last_possible_break..].replace('\n', ' ').trim(' '),
+				safe_max).trim(' ')
+		} else if width > safe_max {
+			break
+		}
+	}
+	if never_touched {
+		return str
 	}
 	return fitted
 }

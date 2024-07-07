@@ -1,15 +1,15 @@
 // Test .v (V) parse style
 import flags
 
-const exe_and_go_flag_args = ['/path/to/exe', '-version', '-d', 'ident=val', '-o', '/path/to', '-test',
-	'abc', '-done', '-define', 'two', '-live', '--flag', '--flag-value=ok']
-const exe_and_go_flag_args_with_tail = ['/path/to/exe', '-version', '--flag', '--flag-value=ok', '-d', 'ident=val', '-test', 'abc',
-	'-done', '-d', 'two', '-live', 'run', '/path/to']
+const exe_and_go_flag_args = ['/path/to/exe', '-version', '-d', 'ident=val', '-o', '/path/to',
+	'-test', 'abc', '-done', '-define', 'two', '-live', '--flag', '--flag-value=ok']
+const exe_and_go_flag_args_with_tail = ['/path/to/exe', '-version', '--flag', '--flag-value=ok',
+	'-d', 'ident=val', '-test', 'abc', '-done', '-d', 'two', '-live', 'run', '/path/to']
 
 struct Prefs {
 	flag       bool
 	flag_value string
-  version    bool     @[short: v]
+	version    bool     @[short: v]
 	is_live    bool     @[long: live]
 	is_done    bool     @[long: done]
 	test       string
