@@ -176,7 +176,7 @@ fn (fm FlagMapper) get_struct_info[T]() !StructInfo {
 				}
 			}
 			if long_alias := attrs['long'] {
-				match_name = long_alias
+				match_name = long_alias.replace('_', '-')
 			}
 			if only := attrs['only'] {
 				if only.len == 0 {
@@ -1383,6 +1383,48 @@ fn (mut fm FlagMapper) map_cmd_exe(flag_ctx FlagContext, field StructField) !boo
 	used_delimiter := flag_ctx.delimiter
 	next := flag_ctx.next
 
+	if flag_name == field.match_name {
+		if field.hints.has(.is_bool) {
+			trace_println('${@FN}: found (long) match for (bool) (CMD.EXE style) ${fm.dbg_match(flag_ctx,
+				field, 'true', '')}')
+			fm.field_map_flag[field.name] = Flag{
+				raw: flag
+				field_name: field.name
+				delimiter: used_delimiter
+				name: flag_name
+				pos: pos
+			}
+			fm.handled_pos << pos
+			return true
+		}
+		// Not sure original CMD.EXE flags supported multiple flags with same name??
+		if field.hints.has(.is_array) {
+			trace_println('${@FN}: found match for (CMD.EXE style multiple occurences) ${fm.dbg_match(flag_ctx,
+				field, next, '')}')
+			fm.array_field_map_flag[field.name] << Flag{
+				raw: flag
+				field_name: field.name
+				delimiter: used_delimiter
+				name: flag_name
+				arg: next
+				pos: pos
+			}
+		} else {
+			trace_println('${@FN}: found match for (CMD.EXE style) ${fm.dbg_match(flag_ctx,
+				field, next, '')}')
+			fm.field_map_flag[field.name] = Flag{
+				raw: flag
+				field_name: field.name
+				delimiter: used_delimiter
+				name: flag_name
+				arg: next
+				pos: pos
+			}
+		}
+		fm.handled_pos << pos
+		fm.handled_pos << pos + 1 // arg
+		return true
+	}
 	// Not aware of CMD.EXE flags longer than one (ASCII??) character
 	if shortest_match_name := field.shortest_match_name() {
 		if flag_name == shortest_match_name {
