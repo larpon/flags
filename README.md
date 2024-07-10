@@ -13,10 +13,10 @@ The module supports several flag "styles" like:
 
 # Example
 
-Put the following V code in a file `doc_example.v` and run it with:
+Put the following V code in a file `flags_example.v` and run it with:
 
 ```bash
-v run doc_example.v -h
+v run flags_example.v -h
 ```
 
 ```v
@@ -93,3 +93,63 @@ specify with special field attributes. The matching is done in the following way
 `pub fn to_doc[T](dc DocConfig) !string` returns an auto-generated `string` with flag
 documentation. The documentation can be tweaked in several ways to suit any special
 user needs via the `DocConfig` configuration struct.
+
+# Sub commands
+
+Due to the nature of how `to_struct[T]` works it is not suited for applications that use
+sub commands at first glance.
+`git` and `v` are examples of command line applications that uses sub commands
+e.g.: `v help xyz`, where `help` is the sub command.
+
+To support this "flag" style in your application and still use `to_struct[T]()` you can
+simply parse out your sub command prior to mapping any flags.
+
+Try the following example.
+
+Put the following V code in a file `subcmd.v` and run it with:
+
+```bash
+v run subcmd.v -h && v run subcmd.v sub -h && v run subcmd.v sub --do-stuff # observe the different outputs.
+```
+
+```v
+import flags
+import os
+
+struct Config {
+	show_help bool @[long: help; short: h; xdoc: 'Show version and exit']
+}
+
+struct ConfigSub {
+	show_help bool @[long: help; short: h; xdoc: 'Show version and exit']
+	do_stuff  bool @[xdoc: 'Do stuff']
+}
+
+fn main() {
+	// Handle sub command `sub` if provided
+	if os.args.len >= 2 && !os.args[1].starts_with('-') {
+		if os.args[1] == 'sub' {
+			config_for_sub, _ := flags.to_struct[ConfigSub](os.args, skip: 2)! // NOTE the `skip: 2`
+			if config_for_sub.do_stuff {
+				println('Working...')
+				exit(0)
+			}
+			if config_for_sub.show_help {
+				println(flags.to_doc[ConfigSub](
+					description: 'My sub command'
+				)!)
+				exit(0)
+			}
+		}
+	}
+
+	config, _ := flags.to_struct[Config](os.args, skip: 1)!
+
+	if config.show_help {
+		println(flags.to_doc[Config](
+			description: 'My application'
+		)!)
+		exit(0)
+	}
+}
+```
