@@ -106,14 +106,14 @@ pub enum Show {
 }
 
 pub struct DocLayout {
-pub:
+pub mut:
 	description_padding int = 28
 	description_width   int = 50
 	flag_indent         int = 2
 }
 
 pub struct DocOptions {
-pub:
+pub mut:
 	flag_header string = '\nOptions:'
 	show        Show   = ~Show.zero()
 }
