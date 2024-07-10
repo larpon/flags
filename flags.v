@@ -400,6 +400,9 @@ pub fn (mut fm FlagMapper) parse[T]() ! {
 				if style == .long {
 					return error('short delimiter `${used_delimiter}` encountered in flag `${flag}` in ${style} (GNU) style parsing mode')
 				}
+				if style == .short_long && flag_name.len > 1 && flag_name.contains('-') {
+					return error('long name `${flag_name}` used with short delimiter `${used_delimiter}` in flag `${flag}` in ${style} (POSIX/GNU) style parsing mode')
+				}
 			}
 
 			if flag_name == '' {
