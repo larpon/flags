@@ -23,6 +23,9 @@ v run flags_example.v -h
 import flags
 import os
 
+@[xdoc: 'My application that does X']
+@[name: 'app']
+@[version: '1.2.3']
 struct Config {
 	show_version bool   @[short: v; xdoc: 'Show version and exit']
 	debug_level  int    @[long: debug; short: d; xdoc: 'Debug level']
@@ -49,8 +52,7 @@ fn main() {
 	if config.show_help {
 		// Generate and layout (a configuable) documentation for the flags
 		documentation := flags.to_doc[Config](
-			version: '1.0'
-			description: 'My application'
+			version: '1.0' // NOTE: this overrides the `@[version: '1.2.3']` struct attribute
 			fields: {
 				'level':                                    'This is a doc string of the field `level` on struct `Config`'
 				'example':                                  'This is another doc string'

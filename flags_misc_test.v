@@ -100,18 +100,6 @@ fn test_flags() {
 	assert config4.paths[1] == '/path/to/b'
 }
 
-// fn test_flags_heap() {
-// 	config1, _ := flags.to_struct[&Config](posix_and_gnu_args_with_subcmd, skip: 1)!
-// 	assert config1.mix == false
-// 	assert config1.verbosity == 5
-// 	assert config1.amount == 8
-// 	assert config1.def_test == 'def'
-// 	assert 'one' in config1.device
-// 	assert 'two' in config1.device
-// 	assert 'three' in config1.device
-// 	assert config1.linker_option == 'windows'
-// }
-
 fn test_long_flags() {
 	// Test .long parse style
 	lc1, _ := flags.to_struct[LongConfig](gnu_args, style: .long)!
