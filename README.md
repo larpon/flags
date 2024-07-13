@@ -1,3 +1,9 @@
+# NOTE: Archived. Project is now part of vlib via the `flag` module
+
+Thanks for watching :)
+
+---
+
 # flags
 
 A V module for mapping and documenting different flag styles (as typically found in in `os.args`)
